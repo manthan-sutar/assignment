@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class FirebaseService implements OnModuleInit {
   private firebaseApp: admin.app.App;
+  private storageBucket: string;
 
   constructor(private configService: ConfigService) {}
 
@@ -28,12 +29,17 @@ export class FirebaseService implements OnModuleInit {
       throw new Error('Firebase credentials are missing in environment variables');
     }
 
+    this.storageBucket =
+      this.configService.get<string>('FIREBASE_STORAGE_BUCKET') ||
+      `${projectId}.appspot.com`;
+
     this.firebaseApp = admin.initializeApp({
       credential: admin.credential.cert({
         projectId,
         privateKey,
         clientEmail,
       }),
+      storageBucket: this.storageBucket,
     });
   }
 
@@ -70,5 +76,46 @@ export class FirebaseService implements OnModuleInit {
    */
   getAdmin(): admin.app.App {
     return this.firebaseApp;
+  }
+
+  /**
+   * Upload a file buffer to Firebase Storage and return a download URL.
+   * If FIREBASE_STORAGE_USE_PUBLIC_URL is true, makes the object public and returns
+   * the public URL (no signature). Otherwise returns a v4 signed URL (avoids
+   * v2 "Signature was not base64 encoded" issues).
+   */
+  async uploadBufferAndGetUrl(
+    path: string,
+    buffer: Buffer,
+    contentType: string,
+  ): Promise<string> {
+    const bucket = admin
+      .storage(this.firebaseApp)
+      .bucket(this.storageBucket);
+    const file = bucket.file(path);
+    await file.save(buffer, {
+      contentType,
+      metadata: { cacheControl: 'public, max-age=31536000' },
+    });
+
+    const usePublicUrl =
+      this.configService.get<string>('FIREBASE_STORAGE_USE_PUBLIC_URL') ===
+      'true';
+
+    if (usePublicUrl) {
+      await file.makePublic();
+      return `https://storage.googleapis.com/${this.storageBucket}/${path}`;
+    }
+
+    // v4 signed URLs allow max 7 days (604800 seconds)
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const expires = new Date(Date.now() + sevenDaysMs);
+    const [url] = (await file.getSignedUrl({
+      action: 'read',
+      expires,
+      version: 'v4',
+      virtualHostedStyle: true,
+    })) as [string];
+    return url;
   }
 }

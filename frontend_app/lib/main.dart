@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,33 +22,48 @@ import 'features/reels/presentation/bloc/reels_bloc.dart';
 
 /**
  * Main Entry Point
- * Initializes Firebase, sets up dependency injection, and starts the app
+ * Initializes Firebase, sets up dependency injection, and starts the app.
+ * All of this runs in the same zone so Flutter bindings and runApp stay consistent.
  */
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase
-  bool firebaseInitialized = false;
-  try {
-    await FirebaseConfig.initialize();
-    firebaseInitialized = FirebaseConfig.isInitialized;
-  } catch (e) {
-    debugPrint('Firebase initialization error: $e');
-    firebaseInitialized = false;
-  }
+      // Initialize Firebase
+      bool firebaseInitialized = false;
+      try {
+        await FirebaseConfig.initialize();
+        firebaseInitialized = FirebaseConfig.isInitialized;
+      } catch (e) {
+        debugPrint('Firebase initialization error: $e');
+        firebaseInitialized = false;
+      }
 
-  // Initialize SharedPreferences
-  final prefs = await SharedPreferences.getInstance();
+      // Initialize SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
 
-  final authLocalDataSource = AuthLocalDataSource(prefs);
-  _authRepository = _createAuthRepository(
-    prefs,
-    firebaseInitialized,
-    authLocalDataSource,
+      final authLocalDataSource = AuthLocalDataSource(prefs);
+      _authRepository = _createAuthRepository(
+        prefs,
+        firebaseInitialized,
+        authLocalDataSource,
+      );
+      _reelsRepository = _createReelsRepository(authLocalDataSource);
+
+      runApp(MyApp(firebaseInitialized: firebaseInitialized));
+    },
+    (error, stack) {
+      if (error is PlatformException) {
+        final code = error.code.toLowerCase();
+        final msg = (error.message ?? '').toLowerCase();
+        if (code == 'abort' || msg.contains('loading interrupted')) return;
+        if (msg.contains('already exists') || code.contains('already exists'))
+          return;
+      }
+      throw error;
+    },
   );
-  _reelsRepository = _createReelsRepository(authLocalDataSource);
-
-  runApp(MyApp(firebaseInitialized: firebaseInitialized));
 }
 
 /// Set in main() so they survive hot reload and are never null when used.

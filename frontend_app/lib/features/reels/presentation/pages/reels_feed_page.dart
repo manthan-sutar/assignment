@@ -24,6 +24,8 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
   late final ReelsAudioController _audioController;
   List<ReelEntity> _reels = [];
   bool _hasTriggeredFirstPlay = false;
+  int? _pendingScrollEnd;
+  bool _pausedByHold = false;
 
   @override
   void initState() {
@@ -78,125 +80,209 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
     _audioController.playReelAt(index);
   }
 
+  void _resumeIfPausedByHold() {
+    if (_pausedByHold) {
+      _pausedByHold = false;
+      _audioController.resume();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey.shade900,
-      body: BlocConsumer<ReelsBloc, ReelsState>(
-        listener: (context, state) {
-          if (state is ReelsError) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    const Icon(Icons.error_outline, color: Colors.white),
-                    const SizedBox(width: 12),
-                    Expanded(child: Text(state.message)),
-                  ],
-                ),
-                backgroundColor: Colors.red.shade600,
-                behavior: SnackBarBehavior.floating,
-                action: SnackBarAction(
-                  label: 'Retry',
-                  textColor: Colors.white,
-                  onPressed: () {
-                    context.read<ReelsBloc>().add(const ReelsLoadRequested());
-                  },
-                ),
-              ),
-            );
-          }
-        },
-        builder: (context, state) {
-          if (state is ReelsLoading) {
-            return const Center(
-              child: CircularProgressIndicator(
-                color: Colors.deepPurple,
-                strokeWidth: 2.5,
-              ),
-            );
-          }
-
-          if (state is ReelsError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.wifi_off_rounded,
-                      size: 64,
-                      color: Colors.grey.shade400,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          BlocConsumer<ReelsBloc, ReelsState>(
+            listener: (context, state) {
+              if (state is ReelsError) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        const Icon(Icons.error_outline, color: Colors.white),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(state.message)),
+                      ],
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      state.message,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.grey.shade300,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton.icon(
+                    backgroundColor: Colors.red.shade600,
+                    behavior: SnackBarBehavior.floating,
+                    action: SnackBarAction(
+                      label: 'Retry',
+                      textColor: Colors.white,
                       onPressed: () {
                         context.read<ReelsBloc>().add(
                           const ReelsLoadRequested(),
                         );
                       },
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Retry'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.deepPurple.shade600,
-                        foregroundColor: Colors.white,
+                    ),
+                  ),
+                );
+              }
+            },
+            builder: (context, state) {
+              if (state is ReelsLoading) {
+                return const Center(
+                  child: CircularProgressIndicator(
+                    color: Colors.deepPurple,
+                    strokeWidth: 2.5,
+                  ),
+                );
+              }
+
+              if (state is ReelsError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.wifi_off_rounded,
+                          size: 64,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          state.message,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey.shade300,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            context.read<ReelsBloc>().add(
+                              const ReelsLoadRequested(),
+                            );
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.deepPurple.shade600,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              if (state is ReelsLoaded) {
+                final reels = state.reels;
+                if (reels.isEmpty) {
+                  return Center(
+                    child: Text(
+                      'No reels yet',
+                      style: TextStyle(
+                        fontSize: 18,
+                        color: Colors.grey.shade400,
+                      ),
+                    ),
+                  );
+                }
+
+                _reels = reels;
+
+                // Prepare first reel then play so audio starts immediately (no delay).
+                _audioController.setReels(reels);
+                if (!_hasTriggeredFirstPlay) {
+                  _hasTriggeredFirstPlay = true;
+                  _audioController.prepareReelAt(0).then((_) {
+                    if (!mounted) return;
+                    _onReelBecameVisible(0);
+                  });
+                }
+
+                // Vertical carousel + overlay. Hold to pause, release to resume.
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Listener(
+                      onPointerDown: (_) {
+                        if (_audioController.state.value.isPlaying) {
+                          _pausedByHold = true;
+                          _audioController.pause();
+                        }
+                      },
+                      onPointerUp: (_) => _resumeIfPausedByHold(),
+                      onPointerCancel: (_) => _resumeIfPausedByHold(),
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (notification) {
+                          if (notification is ScrollEndNotification) {
+                            final scheduleId =
+                                DateTime.now().millisecondsSinceEpoch;
+                            _pendingScrollEnd = scheduleId;
+                            Future.delayed(
+                              const Duration(milliseconds: 80),
+                              () {
+                                if (!mounted || _pendingScrollEnd != scheduleId)
+                                  return;
+                                _pendingScrollEnd = null;
+                                final page = _pageController.page?.round() ?? 0;
+                                final index = page.clamp(0, reels.length - 1);
+                                _onReelBecameVisible(index);
+                              },
+                            );
+                          }
+                          return false;
+                        },
+                        child: PageView.builder(
+                          controller: _pageController,
+                          scrollDirection: Axis.vertical,
+                          physics: const PageScrollPhysics(
+                            parent: BouncingScrollPhysics(),
+                          ),
+                          itemCount: reels.length,
+                          itemBuilder: (context, index) {
+                            final reel = reels[index];
+                            return SizedBox.expand(
+                              child: ReelCard(
+                                reel: reel,
+                                index: index,
+                                controller: _audioController,
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ],
+                );
+              }
+
+              return const SizedBox.shrink();
+            },
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 20, top: 20),
+                child: Material(
+                  color: Colors.black26,
+                  borderRadius: BorderRadius.circular(24),
+                  child: IconButton(
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new,
+                      color: Colors.white,
+                    ),
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: IconButton.styleFrom(
+                      padding: const EdgeInsets.all(8),
+                      minimumSize: const Size(44, 44),
+                    ),
+                  ),
                 ),
               ),
-            );
-          }
-
-          if (state is ReelsLoaded) {
-            final reels = state.reels;
-            if (reels.isEmpty) {
-              return Center(
-                child: Text(
-                  'No reels yet',
-                  style: TextStyle(fontSize: 18, color: Colors.grey.shade400),
-                ),
-              );
-            }
-
-            _reels = reels;
-
-            if (!_hasTriggeredFirstPlay) {
-              _hasTriggeredFirstPlay = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!mounted) return;
-                _onReelBecameVisible(0);
-              });
-            }
-
-            // Vertical carousel: one full-screen page per reel, snap like Instagram.
-            return PageView.builder(
-              controller: _pageController,
-              scrollDirection: Axis.vertical,
-              physics: const PageScrollPhysics(parent: BouncingScrollPhysics()),
-              onPageChanged: (index) {
-                _onReelBecameVisible(index);
-              },
-              itemCount: reels.length,
-              itemBuilder: (context, index) {
-                final reel = reels[index];
-                return SizedBox.expand(child: ReelCard(reel: reel));
-              },
-            );
-          }
-
-          return const SizedBox.shrink();
-        },
+            ),
+          ),
+        ],
       ),
     );
   }

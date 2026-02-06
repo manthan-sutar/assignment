@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Reel } from './entities/reel.entity';
 import { ReelsService } from './reels.service';
 import { ReelsController } from './reels.controller';
+import { AdminGuard } from './guards/admin.guard';
 
 /**
  * Reels Module
@@ -12,7 +13,7 @@ import { ReelsController } from './reels.controller';
 @Module({
   imports: [TypeOrmModule.forFeature([Reel])],
   controllers: [ReelsController],
-  providers: [ReelsService],
+  providers: [ReelsService, AdminGuard],
   exports: [ReelsService],
 })
 export class ReelsModule {}

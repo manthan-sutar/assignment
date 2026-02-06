@@ -19,10 +19,24 @@ DB_SYNC=true
 FIREBASE_PROJECT_ID=your-project-id
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour private key here\n-----END PRIVATE KEY-----\n"
 FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com
+# Storage bucket for reels uploads (e.g. audioreel.firebasestorage.app or your-project.appspot.com)
+FIREBASE_STORAGE_BUCKET=audioreel.firebasestorage.app
+# Set to true to use public URLs for uploads (no signed URL). Objects will be publicly readable. Avoids "Signature was not base64 encoded" errors.
+# FIREBASE_STORAGE_USE_PUBLIC_URL=true
 
 # JWT Configuration (if needed later)
 JWT_SECRET=your-jwt-secret-key
+
+# Admin upload (reels) – set a secret key and pass it as X-Admin-Key when uploading
+ADMIN_API_KEY=your-admin-secret-key
+
+# Agora (calls & live audio streaming)
+# Get these from https://console.agora.io/ → Your project → App ID & Certificate
+AGORA_APP_ID=your-agora-app-id
+AGORA_APP_CERTIFICATE=your-agora-app-certificate
 ```
+
+**Note:** For reels admin upload, `ffmpeg` and `ffprobe` must be installed on the server (used to convert uploaded audio to M4A).
 
 ## Firebase Setup Instructions
 
@@ -35,6 +49,7 @@ JWT_SECRET=your-jwt-secret-key
    - `project_id` → `FIREBASE_PROJECT_ID`
    - `private_key` → `FIREBASE_PRIVATE_KEY` (keep the quotes and \n characters)
    - `client_email` → `FIREBASE_CLIENT_EMAIL`
+6. For reels admin upload, set **FIREBASE_STORAGE_BUCKET** to your Storage bucket name (Firebase Console > Storage: use the bucket host, e.g. `audioreel.firebasestorage.app` or `your-project-id.appspot.com`).
 
 ## Database Setup
 

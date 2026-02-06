@@ -51,6 +51,10 @@ dependencies:
   just_audio: ^0.9.40
   cached_network_image: ^3.4.1
 
+  # Agora: voice/video calling and live audio streaming
+  agora_rtc_engine: ^6.5.3
+  permission_handler: ^11.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

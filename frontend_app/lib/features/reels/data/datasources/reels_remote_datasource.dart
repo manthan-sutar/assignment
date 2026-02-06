@@ -9,7 +9,8 @@ import '../models/reel_model.dart';
 
 /// Fetches reels from the backend. Requires a valid auth token.
 class ReelsRemoteDataSource {
-  ReelsRemoteDataSource({http.Client? client}) : _client = client ?? http.Client();
+  ReelsRemoteDataSource({http.Client? client})
+    : _client = client ?? http.Client();
 
   final http.Client _client;
 
@@ -55,7 +56,9 @@ class ReelsRemoteDataSource {
     } catch (e) {
       if (e is ReelsException) rethrow;
       debugPrint('Reels fetch error: $e');
-      throw ReelsNetworkException('Check your connection and try again.');
+      final baseUrl = AppConfig.baseUrl;
+      final cause = e.toString().replaceFirst(RegExp(r'^Exception: '), '');
+      throw ReelsNetworkException('Cannot reach $baseUrl. $cause');
     }
   }
 }
