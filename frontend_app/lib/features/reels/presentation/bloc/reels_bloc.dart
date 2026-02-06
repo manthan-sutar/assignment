@@ -1,0 +1,37 @@
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import '../../domain/repositories/reels_repository.dart';
+import '../../../../core/errors/reels_exceptions.dart';
+import 'reels_event.dart';
+import 'reels_state.dart';
+
+class ReelsBloc extends Bloc<ReelsEvent, ReelsState> {
+  ReelsBloc({required ReelsRepository reelsRepository})
+      : _reelsRepository = reelsRepository,
+        super(const ReelsInitial()) {
+    on<ReelsLoadRequested>(_onLoadRequested);
+  }
+
+  final ReelsRepository _reelsRepository;
+
+  Future<void> _onLoadRequested(
+    ReelsLoadRequested event,
+    Emitter<ReelsState> emit,
+  ) async {
+    emit(const ReelsLoading());
+    try {
+      final reels = await _reelsRepository.getReels();
+      emit(ReelsLoaded(reels));
+    } on ReelsUnauthorizedException {
+      emit(const ReelsError('Please sign in again.'));
+    } on ReelsNetworkException catch (e) {
+      emit(ReelsError(e.message));
+    } on ReelsServerException catch (e) {
+      emit(ReelsError(e.message));
+    } on ReelsException catch (e) {
+      emit(ReelsError(e.message));
+    } catch (e) {
+      emit(const ReelsError('Something went wrong. Try again.'));
+    }
+  }
+}

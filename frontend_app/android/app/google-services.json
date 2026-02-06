@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "149887588874",
+    "project_id": "audioreel",
+    "storage_bucket": "audioreel.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:149887588874:android:a64ad92a2d0a4f899f9df3",
+        "android_client_info": {
+          "package_name": "com.example.frontend_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAjdnDgktH3XJQnLk5mS3q_nlwPNEeCzAM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
