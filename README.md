@@ -31,10 +31,6 @@ A cross-platform Flutter app with a NestJS backend providing **audio reels** (ve
 assignment/
 ├── README.md                 # This file
 ├── .gitignore
-├── AUTH_IMPLEMENTATION_PLAN.md
-├── FIREBASE_SETUP_GUIDE.md
-├── REELS_FLASH_SPEED_CHECKLIST.md
-├── WEBSOCKET_VERIFICATION_AND_RATING.md
 ├── backend_app/              # NestJS API + WebSocket + static files
 │   ├── src/
 │   │   ├── auth/             # Sign-in, sign-up, profile, FCM token, users list
@@ -135,8 +131,6 @@ flutter run
 - **Reels**: `ReelsBloc` loads list; `ReelsFeedPage` uses `PageView` + `ReelsAudioController` (two `AudioPlayer`s for preload, lifecycle pause/resume).
 - **Live**: `LiveHubBloc` + `SignalingService.liveStarted` / `liveEnded`; host/listener use `LiveRepository` + Agora with publisher/subscriber roles.
 
-See `WEBSOCKET_VERIFICATION_AND_RATING.md` and `AUTH_IMPLEMENTATION_PLAN.md` for more detail.
-
 ---
 
 ## Documentation
@@ -145,8 +139,6 @@ See `WEBSOCKET_VERIFICATION_AND_RATING.md` and `AUTH_IMPLEMENTATION_PLAN.md` for
 |-----|--------|
 | [backend_app/README.md](backend_app/README.md) | NestJS setup and scripts |
 | [backend_app/ENV_SETUP.md](backend_app/ENV_SETUP.md) | Environment variables |
-| [FIREBASE_SETUP_GUIDE.md](FIREBASE_SETUP_GUIDE.md) | Firebase project and Flutter config |
-| [AUTH_IMPLEMENTATION_PLAN.md](AUTH_IMPLEMENTATION_PLAN.md) | Auth flow and API |
 | [frontend_app/IOS_TEST_CHECKLIST.md](frontend_app/IOS_TEST_CHECKLIST.md) | iOS testing notes |
 
 ---
