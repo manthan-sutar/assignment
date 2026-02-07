@@ -1,58 +1,43 @@
-import 'dart:convert';
-
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 
 import '../../../../core/config/app_config.dart';
 import '../../../../core/errors/reels_exceptions.dart';
+import '../../../../core/network/dio_client.dart';
 import '../models/reel_model.dart';
 
-/// Fetches reels from the backend. Requires a valid auth token.
+/// Fetches reels from the backend. Uses [DioClient]; 2xx is success.
 class ReelsRemoteDataSource {
-  ReelsRemoteDataSource({http.Client? client})
-    : _client = client ?? http.Client();
+  ReelsRemoteDataSource({DioClient? dioClient})
+    : _client = dioClient ?? DioClient();
 
-  final http.Client _client;
+  final DioClient _client;
 
-  /// Fetches list of reels. [idToken] must be non-null and valid.
   Future<List<ReelModel>> fetchReels(String? idToken) async {
     if (idToken == null || idToken.isEmpty) {
       throw ReelsUnauthorizedException();
     }
-
-    final uri = Uri.parse('${AppConfig.baseUrl}${AppConfig.reelsEndpoint}');
-    final headers = {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $idToken',
-    };
-
     try {
-      final response = await _client.get(uri, headers: headers);
-
-      if (response.statusCode == 200) {
-        final decoded = jsonDecode(response.body);
-        if (decoded is! List) {
-          throw ReelsServerException('Invalid response format');
-        }
-        return decoded
-            .map((e) => ReelModel.fromJson(e as Map<String, dynamic>))
-            .toList();
+      final response = await _client.get<List<dynamic>>(
+        AppConfig.reelsEndpoint,
+        headers: {'Authorization': 'Bearer $idToken'},
+      );
+      final decoded = response.data;
+      if (decoded is! List) {
+        throw ReelsServerException('Invalid response format');
       }
-
-      if (response.statusCode == 401) {
+      return decoded
+          .map((e) => ReelModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      if (DioClient.getStatusCode(e) == 401) {
         throw ReelsUnauthorizedException();
       }
-
-      if (response.statusCode >= 500) {
+      if ((e.response?.statusCode ?? 0) >= 500) {
         throw ReelsServerException('Server error. Try again later.');
       }
-
-      String message = 'Failed to load reels';
-      try {
-        final err = jsonDecode(response.body) as Map<String, dynamic>;
-        if (err['message'] != null) message = err['message'] as String;
-      } catch (_) {}
-      throw ReelsException(message, statusCode: response.statusCode);
+      final message = DioClient.getErrorMessage(e, 'Failed to load reels');
+      throw ReelsException(message, statusCode: e.response?.statusCode);
     } catch (e) {
       if (e is ReelsException) rethrow;
       debugPrint('Reels fetch error: $e');

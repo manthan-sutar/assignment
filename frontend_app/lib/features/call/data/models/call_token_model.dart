@@ -11,12 +11,35 @@ class CallTokenModel extends CallTokenEntity {
   });
 
   factory CallTokenModel.fromJson(Map<String, dynamic> json) {
+    final token = json['token'] as String?;
+    final channelName = json['channelName'] as String?;
+    final appId = json['appId'] as String?;
+    if (token == null || token.trim().isEmpty) {
+      throw FormatException('Token response missing or empty "token"', json);
+    }
+    if (channelName == null || channelName.trim().isEmpty) {
+      throw FormatException(
+        'Token response missing or empty "channelName"',
+        json,
+      );
+    }
+    if (appId == null || appId.trim().isEmpty) {
+      throw FormatException('Token response missing or empty "appId"', json);
+    }
+    final uidRaw = json['uid'];
+    final uid = uidRaw is num
+        ? uidRaw.toInt()
+        : int.tryParse(uidRaw?.toString() ?? '') ?? 0;
+    if (uid <= 0) {
+      throw FormatException('Token response invalid "uid"', json);
+    }
+    final expiresIn = (json['expiresIn'] as num?)?.toInt() ?? 3600;
     return CallTokenModel(
-      token: json['token'] as String,
-      channelName: json['channelName'] as String,
-      uid: (json['uid'] as num).toInt(),
-      appId: json['appId'] as String,
-      expiresIn: (json['expiresIn'] as num).toInt(),
+      token: token,
+      channelName: channelName,
+      uid: uid,
+      appId: appId,
+      expiresIn: expiresIn,
     );
   }
 }

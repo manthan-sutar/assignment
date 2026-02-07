@@ -1,14 +1,35 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as path from 'path';
+import * as fs from 'fs';
+import { randomUUID } from 'crypto';
 import { FirebaseService } from '../common/services/firebase.service';
 import { User } from '../users/entities/user.entity';
 import { SignInDto } from './dto/sign-in.dto';
 import { SignUpDto } from './dto/sign-up.dto';
+import { UpdateProfileInput } from './dto/update-profile.dto';
 import {
   AuthResponseDto,
   UserNotFoundResponseDto,
 } from './dto/auth-response.dto';
+
+const ALLOWED_IMAGE_MIMES = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+];
+const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
+function isAllowedImage(mimetype: string | undefined, originalname: string | undefined): boolean {
+  const mime = (mimetype || '').toLowerCase().split(';')[0].trim();
+  if (ALLOWED_IMAGE_MIMES.includes(mime)) return true;
+  const ext = (originalname || '').split('.').pop()?.toLowerCase();
+  return ext != null && ALLOWED_EXTENSIONS.includes(ext);
+}
+const MAX_PHOTO_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 /**
  * Auth Service
@@ -141,6 +162,20 @@ export class AuthService {
   }
 
   /**
+   * Update FCM device token for the current user (for push notifications).
+   */
+  async updateFcmToken(firebaseUid: string, fcmToken: string | null): Promise<void> {
+    const user = await this.userRepository.findOne({
+      where: { firebaseUid },
+    });
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+    user.fcmToken = fcmToken?.trim() || null;
+    await this.userRepository.save(user);
+  }
+
+  /**
    * Verify token and return user info
    * Utility method for token verification
    */
@@ -150,5 +185,85 @@ export class AuthService {
       uid: decodedToken.uid,
       email: decodedToken.email || '',
     };
+  }
+
+  /**
+   * Update profile (displayName and optional photo).
+   * Used for onboarding and profile settings.
+   */
+  async updateProfile(
+    firebaseUid: string,
+    input: UpdateProfileInput,
+  ): Promise<User> {
+    const displayName =
+      typeof input.displayName === 'string' ? input.displayName.trim() : '';
+    if (!displayName) {
+      throw new BadRequestException('Name is required');
+    }
+    if (displayName.length > 100) {
+      throw new BadRequestException('Name must be at most 100 characters');
+    }
+
+    const user = await this.userRepository.findOne({
+      where: { firebaseUid },
+    });
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    let photoURL: string | null = null;
+    if (input.photo?.buffer && input.photo.buffer.length > 0) {
+      if (input.photo.size > MAX_PHOTO_SIZE_BYTES) {
+        throw new BadRequestException(
+          `Photo must be under ${MAX_PHOTO_SIZE_BYTES / 1024 / 1024} MB`,
+        );
+      }
+      if (!isAllowedImage(input.photo.mimetype, input.photo.originalname)) {
+        throw new BadRequestException(
+          'Photo must be JPG, JPEG, PNG, GIF, or WebP',
+        );
+      }
+      const mime = (input.photo.mimetype || '').toLowerCase().split(';')[0].trim();
+      const extFromMime = mime.split('/')[1] || '';
+      const extFromName = (input.photo.originalname || '').split('.').pop()?.toLowerCase();
+      const ext = (extFromMime || extFromName || 'jpg').replace('jpeg', 'jpg');
+      const filename = `${randomUUID()}.${ext}`;
+      const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'avatars');
+      try {
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        const filePath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filePath, input.photo.buffer);
+        photoURL = `/uploads/avatars/${filename}`;
+      } catch (err) {
+        throw new BadRequestException(
+          `Failed to save photo: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        );
+      }
+    }
+
+    user.displayName = displayName;
+    if (photoURL !== null) {
+      user.photoURL = photoURL;
+    }
+    return this.userRepository.save(user);
+  }
+
+  /**
+   * List users for "Find people" – all users except the current one.
+   * Returns public fields only: id, displayName, photoURL.
+   */
+  async listUsersExcept(firebaseUid: string): Promise<Array<{ id: string; displayName: string | null; photoURL: string | null }>> {
+    const users = await this.userRepository.find({
+      where: {},
+      select: ['id', 'displayName', 'photoURL', 'firebaseUid'],
+    });
+    const filtered = users.filter((u) => u.firebaseUid !== firebaseUid);
+    return filtered.map((u) => ({
+      id: u.id,
+      displayName: u.displayName,
+      photoURL: u.photoURL,
+    }));
   }
 }

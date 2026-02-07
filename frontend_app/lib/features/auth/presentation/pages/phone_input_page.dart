@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/app_feedback.dart';
+import '../../../../core/widgets/app_loading.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
@@ -95,31 +97,11 @@ class _PhoneInputPageState extends State<PhoneInputPage>
             ),
           );
         } else if (state is AuthError) {
-          // Restore phone number if it was cleared
           if (_lastPhoneNumber != null && _phoneController.text.isEmpty) {
             _phoneController.text = _lastPhoneNumber!;
           }
-          // Show error with better UX
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.white),
-                  const SizedBox(width: 12),
-                  Expanded(child: Text(state.message)),
-                ],
-              ),
-              backgroundColor: Colors.red.shade600,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              margin: const EdgeInsets.all(16),
-            ),
-          );
-          setState(() {
-            _isLoading = false;
-          });
+          AppFeedback.showError(context, state.message);
+          if (mounted) setState(() => _isLoading = false);
         } else if (state is AuthLoading) {
           // Preserve phone number during loading state
           if (_phoneController.text.isNotEmpty) {
@@ -129,6 +111,8 @@ class _PhoneInputPageState extends State<PhoneInputPage>
             _isLoading = true;
           });
         } else if (state is AuthInitial || state is AuthUnauthenticated) {
+          // Not loading (e.g. after CheckAuthStatus or when idle) — ensure button is not stuck in loader
+          if (mounted) setState(() => _isLoading = false);
           // Restore phone number if we have a preserved value
           if (_lastPhoneNumber != null && _phoneController.text.isEmpty) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -310,16 +294,7 @@ class _PhoneInputPageState extends State<PhoneInputPage>
                               ),
                             ),
                             child: _isLoading
-                                ? const SizedBox(
-                                    height: 24,
-                                    width: 24,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.5,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.white,
-                                      ),
-                                    ),
-                                  )
+                                ? AppLoading.buttonLoader(color: Colors.white)
                                 : const Text(
                                     'Send Verification Code',
                                     style: TextStyle(

@@ -1,8 +1,25 @@
-import { Controller, Post, Body, Get, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  Patch,
+  UseGuards,
+  Request,
+  HttpCode,
+  HttpStatus,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { AuthService } from './auth.service';
 import { SignInDto } from './dto/sign-in.dto';
 import { SignUpDto } from './dto/sign-up.dto';
 import { FirebaseAuthGuard } from './guards/firebase-auth.guard';
+
+const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5 MB
 
 /**
  * Auth Controller
@@ -52,6 +69,17 @@ export class AuthController {
   }
 
   /**
+   * List users (Find people)
+   * GET /auth/users
+   * Returns all users except the current one (id, displayName, photoURL).
+   */
+  @UseGuards(FirebaseAuthGuard)
+  @Get('users')
+  async listUsers(@Request() req: { user: { uid: string } }) {
+    return this.authService.listUsersExcept(req.user.uid);
+  }
+
+  /**
    * Verify Token
    * POST /auth/verify-token
    * Utility endpoint to verify Firebase token
@@ -61,4 +89,56 @@ export class AuthController {
   async verifyToken(@Body() body: { idToken: string }) {
     return this.authService.verifyToken(body.idToken);
   }
+
+  /**
+   * Update FCM token for push notifications (incoming call, etc.).
+   * POST /auth/fcm-token
+   * Body: { fcmToken: string } or { fcmToken: null } to clear.
+   */
+  @UseGuards(FirebaseAuthGuard)
+  @Post('fcm-token')
+  @HttpCode(HttpStatus.OK)
+  async updateFcmToken(
+    @Request() req: { user: { uid: string } },
+    @Body() body: { fcmToken?: string | null },
+  ) {
+    const token =
+      body.fcmToken !== undefined && body.fcmToken !== null
+        ? String(body.fcmToken).trim()
+        : null;
+    await this.authService.updateFcmToken(req.user.uid, token || null);
+    return { ok: true };
+  }
+
+  /**
+   * Update profile (onboarding / settings)
+   * PATCH /auth/profile
+   * Body (multipart/form-data): displayName (required), photo (optional file)
+   * Returns updated user. Requires valid Firebase token.
+   */
+  @UseGuards(FirebaseAuthGuard)
+  @Patch('profile')
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_PHOTO_SIZE },
+    }),
+  )
+  async updateProfile(
+    @Request() req: { user: { uid: string } },
+    @Body('displayName') displayName: unknown,
+    @UploadedFile() photo?: Express.Multer.File,
+  ) {
+    const name =
+      typeof displayName === 'string' ? displayName.trim() : String(displayName ?? '').trim();
+    if (!name) {
+      throw new BadRequestException('Name is required');
+    }
+    return this.authService.updateProfile(req.user.uid, {
+      displayName: name,
+      photo,
+    });
+  }
 }
+
+

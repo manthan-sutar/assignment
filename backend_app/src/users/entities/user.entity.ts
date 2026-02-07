@@ -39,6 +39,10 @@ export class User {
   @Column({ unique: true, name: 'firebase_uid' })
   firebaseUid: string;
 
+  /** FCM device token for push (incoming call, etc.). */
+  @Column({ type: 'varchar', nullable: true, name: 'fcm_token' })
+  fcmToken: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

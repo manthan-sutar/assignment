@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/widgets/app_loading.dart';
 import '../bloc/reels_bloc.dart';
 import '../bloc/reels_event.dart';
 import '../bloc/reels_state.dart';
@@ -24,7 +25,7 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
   late final ReelsAudioController _audioController;
   List<ReelEntity> _reels = [];
   bool _hasTriggeredFirstPlay = false;
-  int? _pendingScrollEnd;
+  int _lastVisibleIndex = -1;
   bool _pausedByHold = false;
 
   @override
@@ -32,9 +33,20 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(viewportFraction: 1.0);
+    _pageController.addListener(_onPageControllerChanged);
     _audioController = ReelsAudioController(onError: _showAudioError);
     _audioController.attach();
     context.read<ReelsBloc>().add(const ReelsLoadRequested());
+  }
+
+  void _onPageControllerChanged() {
+    if (_reels.isEmpty) return;
+    final page = _pageController.page ?? 0;
+    final index = page.round().clamp(0, _reels.length - 1);
+    if (index != _lastVisibleIndex) {
+      _lastVisibleIndex = index;
+      _onReelBecameVisible(index);
+    }
   }
 
   void _showAudioError(Object error) {
@@ -58,7 +70,7 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
   void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
     if (lifecycle == AppLifecycleState.paused ||
         lifecycle == AppLifecycleState.inactive) {
-      _audioController.pause();
+      _audioController.pauseForAppBackground();
     } else if (lifecycle == AppLifecycleState.resumed) {
       _audioController.resume();
     }
@@ -66,6 +78,7 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
 
   @override
   void dispose() {
+    _pageController.removeListener(_onPageControllerChanged);
     _pageController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _audioController.dispose();
@@ -123,12 +136,7 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
             },
             builder: (context, state) {
               if (state is ReelsLoading) {
-                return const Center(
-                  child: CircularProgressIndicator(
-                    color: Colors.deepPurple,
-                    strokeWidth: 2.5,
-                  ),
-                );
+                return AppLoading.fullScreen(context);
               }
 
               if (state is ReelsError) {
@@ -192,6 +200,7 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
                 _audioController.setReels(reels);
                 if (!_hasTriggeredFirstPlay) {
                   _hasTriggeredFirstPlay = true;
+                  _lastVisibleIndex = 0;
                   _audioController.prepareReelAt(0).then((_) {
                     if (!mounted) return;
                     _onReelBecameVisible(0);
@@ -214,20 +223,12 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
                       child: NotificationListener<ScrollNotification>(
                         onNotification: (notification) {
                           if (notification is ScrollEndNotification) {
-                            final scheduleId =
-                                DateTime.now().millisecondsSinceEpoch;
-                            _pendingScrollEnd = scheduleId;
-                            Future.delayed(
-                              const Duration(milliseconds: 80),
-                              () {
-                                if (!mounted || _pendingScrollEnd != scheduleId)
-                                  return;
-                                _pendingScrollEnd = null;
-                                final page = _pageController.page?.round() ?? 0;
-                                final index = page.clamp(0, reels.length - 1);
-                                _onReelBecameVisible(index);
-                              },
-                            );
+                            final page = _pageController.page?.round() ?? 0;
+                            final index = page.clamp(0, reels.length - 1);
+                            if (index != _lastVisibleIndex) {
+                              _lastVisibleIndex = index;
+                              _onReelBecameVisible(index);
+                            }
                           }
                           return false;
                         },

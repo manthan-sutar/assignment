@@ -38,6 +38,26 @@ AGORA_APP_CERTIFICATE=your-agora-app-certificate
 
 **Note:** For reels admin upload, `ffmpeg` and `ffprobe` must be installed on the server (used to convert uploaded audio to M4A).
 
+## Agora Setup (required for voice/video calls)
+
+If you see **"Failed to get call token"** or **"Agora is not configured"**, the backend is missing Agora credentials. Add them to `.env`:
+
+1. Go to [Agora Console](https://console.agora.io/).
+2. Sign in or create an account.
+3. Create a project (or use an existing one).
+4. Open the project → **Project Management** → **App ID**.
+5. Copy **App ID** → set as `AGORA_APP_ID` in `.env`.
+6. Under the same project, enable **Primary Certificate** (or create one) and copy it → set as `AGORA_APP_CERTIFICATE` in `.env`.
+
+Example (use your real values):
+
+```env
+AGORA_APP_ID=0123456789abcdef0123456789abcdef
+AGORA_APP_CERTIFICATE=abcdef0123456789abcdef0123456789
+```
+
+Restart the backend after changing `.env`. Calls will then be able to get RTC tokens.
+
 ## Firebase Setup Instructions
 
 1. Go to Firebase Console (https://console.firebase.google.com/)

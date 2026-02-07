@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/app_feedback.dart';
+import '../../../../core/widgets/app_loading.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
+import 'onboarding_page.dart';
 import '../../../../features/call/presentation/pages/dashboard_page.dart';
 
 /**
@@ -26,8 +29,10 @@ class OTPVerificationPage extends StatefulWidget {
 
 class _OTPVerificationPageState extends State<OTPVerificationPage>
     with SingleTickerProviderStateMixin {
-  final List<TextEditingController> _otpControllers =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _otpControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
   bool _isLoading = false;
   bool _hasError = false;
@@ -43,10 +48,7 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
       duration: const Duration(milliseconds: 500),
     );
     _shakeAnimation = Tween<double>(begin: 0, end: 10).animate(
-      CurvedAnimation(
-        parent: _shakeController,
-        curve: Curves.elasticIn,
-      ),
+      CurvedAnimation(parent: _shakeController, curve: Curves.elasticIn),
     );
     // Auto-focus first field
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -81,8 +83,8 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
         _errorMessage = null;
       });
       context.read<AuthBloc>().add(
-            VerifyOTPRequested(widget.verificationId, otp),
-          );
+        VerifyOTPRequested(widget.verificationId, otp),
+      );
     }
   }
 
@@ -136,14 +138,19 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
         if (state is AuthAuthenticated) {
-          // Smooth navigation to dashboard
+          final needsOnboarding =
+              state.user.displayName == null ||
+              state.user.displayName!.trim().isEmpty;
           Navigator.of(context).pushAndRemoveUntil(
             PageRouteBuilder(
               pageBuilder: (context, animation, secondaryAnimation) =>
-                  const DashboardPage(),
-              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                return FadeTransition(opacity: animation, child: child);
-              },
+                  needsOnboarding
+                  ? const OnboardingPage()
+                  : const DashboardPage(),
+              transitionsBuilder:
+                  (context, animation, secondaryAnimation, child) {
+                    return FadeTransition(opacity: animation, child: child);
+                  },
               transitionDuration: const Duration(milliseconds: 300),
             ),
             (route) => false,
@@ -204,11 +211,7 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
                         ),
                       ],
                     ),
-                    child: const Icon(
-                      Icons.sms,
-                      size: 50,
-                      color: Colors.white,
-                    ),
+                    child: const Icon(Icons.sms, size: 50, color: Colors.white),
                   ),
                   const SizedBox(height: 32),
                   const Text(
@@ -224,10 +227,7 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
                   Text(
                     'We sent a code to',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey.shade600,
-                    ),
+                    style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -258,8 +258,11 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.error_outline,
-                                    color: Colors.red.shade600, size: 20),
+                                Icon(
+                                  Icons.error_outline,
+                                  color: Colors.red.shade600,
+                                  size: 20,
+                                ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
@@ -297,14 +300,16 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
                                   color: _hasError
                                       ? Colors.red.shade300
                                       : _focusNodes[index].hasFocus
-                                          ? Colors.deepPurple.shade400
-                                          : Colors.grey.shade300,
+                                      ? Colors.deepPurple.shade400
+                                      : Colors.grey.shade300,
                                   width: _focusNodes[index].hasFocus ? 2 : 1,
                                 ),
                                 boxShadow: _focusNodes[index].hasFocus
                                     ? [
                                         BoxShadow(
-                                          color: Colors.deepPurple.withOpacity(0.2),
+                                          color: Colors.deepPurple.withOpacity(
+                                            0.2,
+                                          ),
                                           blurRadius: 8,
                                           offset: const Offset(0, 4),
                                         ),
@@ -338,7 +343,8 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
                                 inputFormatters: [
                                   FilteringTextInputFormatter.digitsOnly,
                                 ],
-                                onChanged: (value) => _onOTPChanged(index, value),
+                                onChanged: (value) =>
+                                    _onOTPChanged(index, value),
                                 onTap: () {
                                   setState(() {
                                     _hasError = false;
@@ -383,21 +389,15 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.transparent,
                         foregroundColor: Colors.white, // White text color
-                        disabledForegroundColor: Colors.white70, // Lighter white when disabled
+                        disabledForegroundColor:
+                            Colors.white70, // Lighter white when disabled
                         shadowColor: Colors.transparent,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
                         ),
                       ),
                       child: _isLoading
-                          ? const SizedBox(
-                              height: 24,
-                              width: 24,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.5,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
+                          ? AppLoading.buttonLoader(color: Colors.white)
                           : const Text(
                               'Verify Code',
                               style: TextStyle(
@@ -417,25 +417,11 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
                         ? null
                         : () {
                             context.read<AuthBloc>().add(
-                                  SendOTPRequested(widget.phoneNumber),
-                                );
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: const Row(
-                                  children: [
-                                    Icon(Icons.check_circle, color: Colors.white),
-                                    SizedBox(width: 12),
-                                    Text('Verification code sent!'),
-                                  ],
-                                ),
-                                backgroundColor: Colors.green.shade600,
-                                behavior: SnackBarBehavior.floating,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                margin: const EdgeInsets.all(16),
-                                duration: const Duration(seconds: 2),
-                              ),
+                              SendOTPRequested(widget.phoneNumber),
+                            );
+                            AppFeedback.showSuccess(
+                              context,
+                              'Verification code sent!',
                             );
                           },
                     child: Text(
@@ -462,9 +448,7 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
             Container(
@@ -473,10 +457,7 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
                 color: Colors.deepPurple.shade50,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(
-                Icons.person_add,
-                color: Colors.deepPurple.shade600,
-              ),
+              child: Icon(Icons.person_add, color: Colors.deepPurple.shade600),
             ),
             const SizedBox(width: 12),
             const Text('Create Account'),
@@ -529,8 +510,8 @@ class _OTPVerificationPageState extends State<OTPVerificationPage>
             onPressed: () {
               Navigator.of(dialogContext).pop();
               context.read<AuthBloc>().add(
-                    const SignUpWithPhoneRequested(true),
-                  );
+                const SignUpWithPhoneRequested(true),
+              );
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.deepPurple.shade600,

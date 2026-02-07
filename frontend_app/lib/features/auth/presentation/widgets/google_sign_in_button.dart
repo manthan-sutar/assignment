@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/widgets/app_loading.dart';
 
 /**
  * Google Sign In Button
@@ -22,10 +23,13 @@ class GoogleSignInButton extends StatelessWidget {
       child: ElevatedButton.icon(
         onPressed: isLoading ? null : onPressed,
         icon: isLoading
-            ? const SizedBox(
+            ? SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: CircularProgressIndicator(
+                  strokeWidth: AppLoading.strokeWidth,
+                  color: Colors.grey.shade700,
+                ),
               )
             : Image.asset(
                 'assets/images/google_logo.png',

@@ -1,0 +1,6 @@
+# Debug and local artifacts
+firebase-debug.log
+*.log
+
+# Backend user uploads (avatars, etc.)
+backend_app/public/uploads/

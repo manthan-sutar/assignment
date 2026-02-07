@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import '../../domain/entities/display_user_entity.dart';
 import '../../domain/entities/user_entity.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../datasources/auth_remote_datasource.dart';
@@ -233,6 +236,22 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
+  Future<String?> getCurrentIdToken() async {
+    try {
+      final token = await localDataSource.getToken();
+      if (token != null && token.isNotEmpty) return token;
+      if (firebaseAuth == null) return null;
+      final firebaseUser = firebaseAuth!.currentUser;
+      if (firebaseUser == null) return null;
+      final idToken = await firebaseUser.getIdToken();
+      if (idToken != null) await localDataSource.saveToken(idToken);
+      return idToken;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
   Future<bool> isAuthenticated() async {
     final user = await getCurrentUser();
     return user != null;
@@ -251,5 +270,85 @@ class AuthRepositoryImpl implements AuthRepository {
       };
     }
     return null;
+  }
+
+  @override
+  Future<UserEntity> updateProfile(
+    String displayName, {
+    String? photoPath,
+  }) async {
+    _checkFirebaseAuth();
+    var token = await localDataSource.getToken();
+    if (token == null || token.isEmpty) {
+      final firebaseUser = firebaseAuth!.currentUser;
+      if (firebaseUser == null) {
+        throw ProfileUpdateException('Not signed in');
+      }
+      final idToken = await firebaseUser.getIdToken();
+      if (idToken == null) {
+        throw ProfileUpdateException('Failed to get token');
+      }
+      await localDataSource.saveToken(idToken);
+      token = idToken;
+    }
+    final idToken = await localDataSource.getToken();
+    if (idToken == null || idToken.isEmpty) {
+      throw ProfileUpdateException('Not signed in');
+    }
+    final File? file = (photoPath != null && photoPath.isNotEmpty)
+        ? File(photoPath)
+        : null;
+    try {
+      final userModel = await remoteDataSource.updateProfile(
+        idToken,
+        displayName,
+        photoFile: file,
+      );
+      await localDataSource.saveUser(userModel);
+      return userModel.toEntity();
+    } catch (e) {
+      if (e is ProfileUpdateException) rethrow;
+      throw ProfileUpdateException('Profile update failed: ${e.toString()}');
+    }
+  }
+
+  @override
+  Future<List<DisplayUserEntity>> getUsers() async {
+    final token = await localDataSource.getToken();
+    if (token == null || token.isEmpty) {
+      if (firebaseAuth != null && firebaseAuth!.currentUser != null) {
+        final idToken = await firebaseAuth!.currentUser!.getIdToken();
+        if (idToken != null) {
+          await localDataSource.saveToken(idToken);
+        }
+      }
+    }
+    final idToken = await localDataSource.getToken();
+    if (idToken == null || idToken.isEmpty) return [];
+    try {
+      final list = await remoteDataSource.getUsers(idToken);
+      return list
+          .map(
+            (e) => DisplayUserEntity(
+              id: e.id,
+              displayName: e.displayName,
+              photoURL: e.photoURL,
+            ),
+          )
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  @override
+  Future<void> updateFcmToken(String? fcmToken) async {
+    final idToken = await getCurrentIdToken();
+    if (idToken == null || idToken.isEmpty) return;
+    try {
+      await remoteDataSource.updateFcmToken(idToken, fcmToken);
+    } catch (e) {
+      debugPrint('updateFcmToken failed: $e');
+    }
   }
 }

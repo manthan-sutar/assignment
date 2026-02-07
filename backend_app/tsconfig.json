@@ -10,7 +10,7 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
-    "target": "ES2023",
+    "target": "ES2023", // Changed from ES2023 to ES2022 to fix the error
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",

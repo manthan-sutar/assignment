@@ -5,18 +5,44 @@ import 'auth_state.dart';
 
 /**
  * Auth BLoC
- * Manages authentication state and business logic
- * Handles sign in, sign up, sign out, and auth status checks
+ * Manages authentication state and business logic.
+ * Handles sign in, sign up, sign out, and auth status checks.
+ * Errors are normalized to user-friendly messages.
  */
 class AuthBloc extends Bloc<AuthEvent, AuthState> {
-  final AuthRepository authRepository;
-
-  AuthBloc({required this.authRepository}) : super(const AuthInitial()) {
+  AuthBloc({required AuthRepository authRepository})
+    : _authRepository = authRepository,
+      super(const AuthInitial()) {
     on<SendOTPRequested>(_onSendOTP);
     on<VerifyOTPRequested>(_onVerifyOTP);
     on<SignUpWithPhoneRequested>(_onSignUpWithPhone);
+    on<ProfileUpdateRequested>(_onProfileUpdate);
     on<SignOutRequested>(_onSignOut);
     on<CheckAuthStatus>(_onCheckAuthStatus);
+  }
+
+  final AuthRepository _authRepository;
+
+  static String _userFriendlyMessage(Object e) {
+    final msg = e
+        .toString()
+        .replaceFirst(
+          RegExp(
+            r'^(Exception|AuthException|SignInException|SignUpException|TokenException|ProfileUpdateException):\s*',
+          ),
+          '',
+        )
+        .trim();
+    if (msg.isEmpty) return 'Something went wrong. Please try again.';
+    if (msg.toLowerCase().contains('network') ||
+        msg.toLowerCase().contains('socket')) {
+      return 'Network error. Check your connection and try again.';
+    }
+    if (msg.toLowerCase().contains('too many requests') ||
+        msg.toLowerCase().contains('quota')) {
+      return 'Too many attempts. Please try again later.';
+    }
+    return msg;
   }
 
   /// Handle send OTP
@@ -26,10 +52,10 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   ) async {
     emit(const AuthLoading());
     try {
-      final verificationId = await authRepository.sendOTP(event.phoneNumber);
+      final verificationId = await _authRepository.sendOTP(event.phoneNumber);
       emit(OTPSent(verificationId, event.phoneNumber));
     } catch (e) {
-      emit(AuthError(e.toString()));
+      emit(AuthError(_userFriendlyMessage(e)));
     }
   }
 
@@ -40,27 +66,29 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   ) async {
     emit(const AuthLoading());
     try {
-      final user = await authRepository.verifyOTPAndSignIn(event.verificationId, event.otp);
+      final user = await _authRepository.verifyOTPAndSignIn(
+        event.verificationId,
+        event.otp,
+      );
       if (user != null) {
         emit(AuthAuthenticated(user));
       } else {
         // User not found - Firebase user is still signed in (OTP verified)
         // Get Firebase user info for the sign-up dialog
-        final firebaseUser = await authRepository.getFirebaseUserInfo();
+        final firebaseUser = await _authRepository.getFirebaseUserInfo();
         if (firebaseUser != null) {
-          emit(AuthUserNotFound(
-            phoneNumber: firebaseUser['phoneNumber'] ?? '',
-            firebaseUid: firebaseUser['uid'] ?? '',
-          ));
+          emit(
+            AuthUserNotFound(
+              phoneNumber: firebaseUser['phoneNumber'] ?? '',
+              firebaseUid: firebaseUser['uid'] ?? '',
+            ),
+          );
         } else {
-          emit(const AuthUserNotFound(
-            phoneNumber: '',
-            firebaseUid: '',
-          ));
+          emit(const AuthUserNotFound(phoneNumber: '', firebaseUid: ''));
         }
       }
     } catch (e) {
-      emit(AuthError(e.toString()));
+      emit(AuthError(_userFriendlyMessage(e)));
     }
   }
 
@@ -71,10 +99,27 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   ) async {
     emit(const AuthLoading());
     try {
-      final user = await authRepository.signUpWithPhone(event.consent);
+      final user = await _authRepository.signUpWithPhone(event.consent);
       emit(AuthAuthenticated(user));
     } catch (e) {
-      emit(AuthError(e.toString()));
+      emit(AuthError(_userFriendlyMessage(e)));
+    }
+  }
+
+  /// Handle profile update (onboarding)
+  Future<void> _onProfileUpdate(
+    ProfileUpdateRequested event,
+    Emitter<AuthState> emit,
+  ) async {
+    emit(const AuthLoading());
+    try {
+      final user = await _authRepository.updateProfile(
+        event.displayName,
+        photoPath: event.photoPath,
+      );
+      emit(AuthAuthenticated(user));
+    } catch (e) {
+      emit(AuthError(_userFriendlyMessage(e)));
     }
   }
 
@@ -85,10 +130,10 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   ) async {
     emit(const AuthLoading());
     try {
-      await authRepository.signOut();
+      await _authRepository.signOut();
       emit(const AuthUnauthenticated());
     } catch (e) {
-      emit(AuthError(e.toString()));
+      emit(AuthError(_userFriendlyMessage(e)));
     }
   }
 
@@ -99,7 +144,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   ) async {
     emit(const AuthLoading());
     try {
-      final user = await authRepository.getCurrentUser();
+      final user = await _authRepository.getCurrentUser();
       if (user != null) {
         emit(AuthAuthenticated(user));
       } else {

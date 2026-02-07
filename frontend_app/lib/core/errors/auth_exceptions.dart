@@ -21,3 +21,7 @@ class SignUpException extends AuthException {
 class TokenException extends AuthException {
   TokenException(String message) : super(message);
 }
+
+class ProfileUpdateException extends AuthException {
+  ProfileUpdateException(String message) : super(message);
+}

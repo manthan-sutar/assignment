@@ -29,10 +29,14 @@ class ReelCard extends StatelessWidget {
           fit: BoxFit.cover,
           placeholder: (_, __) => Container(
             color: Colors.grey.shade300,
-            child: const Center(
-              child: CircularProgressIndicator(
-                color: Colors.deepPurple,
-                strokeWidth: 2,
+            child: Center(
+              child: SizedBox(
+                width: 32,
+                height: 32,
+                child: CircularProgressIndicator(
+                  color: Colors.deepPurple,
+                  strokeWidth: 2.5,
+                ),
               ),
             ),
           ),

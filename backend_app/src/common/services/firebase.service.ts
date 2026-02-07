@@ -79,6 +79,32 @@ export class FirebaseService implements OnModuleInit {
   }
 
   /**
+   * Send FCM message to a device token (data + optional notification for when app is in background/killed).
+   */
+  async sendToToken(
+    token: string,
+    data: Record<string, string>,
+    notification?: { title: string; body: string },
+  ): Promise<void> {
+    if (!token?.trim()) return;
+    const messaging = admin.messaging(this.firebaseApp);
+    const message: admin.messaging.Message = {
+      token,
+      data,
+      notification: notification
+        ? { title: notification.title, body: notification.body }
+        : undefined,
+      android: { priority: 'high' as const },
+      apns: { payload: { aps: { contentAvailable: true } }, fcmOptions: {} },
+    };
+    try {
+      await messaging.send(message);
+    } catch (err) {
+      console.error('FCM send failed:', err);
+    }
+  }
+
+  /**
    * Upload a file buffer to Firebase Storage and return a download URL.
    * If FIREBASE_STORAGE_USE_PUBLIC_URL is true, makes the object public and returns
    * the public URL (no signature). Otherwise returns a v4 signed URL (avoids

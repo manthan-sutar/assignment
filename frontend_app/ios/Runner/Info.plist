@@ -50,8 +50,17 @@
 			<key>NSAllowsLocalNetworking</key>
 			<true />
 		</dict>
+		<!-- Incoming call: CallKit and background push -->
+		<key>UIBackgroundModes</key>
+		<array>
+			<string>voip</string>
+			<string>remote-notification</string>
+		</array>
 		<!-- Agora & call: microphone for voice and live audio streaming -->
 		<key>NSMicrophoneUsageDescription</key>
 		<string>This app uses the microphone for voice calls and live audio.</string>
+		<!-- Onboarding: profile picture from photo library -->
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Choose a profile picture from your photo library.</string>
 	</dict>
 </plist>

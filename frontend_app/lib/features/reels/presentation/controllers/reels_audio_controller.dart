@@ -38,18 +38,27 @@ bool _isIgnorableAudioException(Object e) {
   return false;
 }
 
-/// Reels audio: single [AudioPlayer]. Generation token prevents stale setUrl/play.
-/// First reel is prepared so it plays immediately; switching reels does stop → setUrl → play.
+/// Reels audio: two [AudioPlayer]s so the next reel is preloaded and starts instantly.
+/// Generation token prevents stale setUrl/play.
 class ReelsAudioController {
   ReelsAudioController({ReelsAudioErrorCallback? onError}) : _onError = onError;
 
   final ReelsAudioErrorCallback? _onError;
 
   List<ReelEntity> _reels = const [];
-  final AudioPlayer _player = AudioPlayer();
+  final AudioPlayer _playerA = AudioPlayer();
+  final AudioPlayer _playerB = AudioPlayer();
+
+  /// True when A is the active (playing) player, B is preload; false when B is active, A is preload.
+  bool _mainIsA = true;
+
+  AudioPlayer get _mainPlayer => _mainIsA ? _playerA : _playerB;
+  AudioPlayer get _preloadPlayer => _mainIsA ? _playerB : _playerA;
 
   int _currentReelIndex = -1;
-  int _preparedReelIndex = -1;
+
+  /// Index loaded in _preloadPlayer (-1 if none).
+  int _preloadedIndex = -1;
   int _generation = 0;
   bool _wasPlayingBeforeAppPause = false;
   StreamSubscription<PlayerState>? _playerSub;
@@ -78,13 +87,30 @@ class ReelsAudioController {
     _reels = reels;
   }
 
-  /// Load a reel so [playReelAt] can start instantly. Returns when ready or fails.
+  /// Load a reel so [playReelAt] can start instantly; preloads next reel for instant switch.
   Future<void> prepareReelAt(int index) async {
     if (_disposed || index < 0 || index >= _reels.length) return;
     try {
-      await _player.setUrl(_reels[index].audioUrl);
+      await _mainPlayer.setUrl(_reels[index].audioUrl);
       if (_disposed) return;
-      _preparedReelIndex = index;
+      _currentReelIndex = index;
+      state.value = state.value.copyWith(currentIndex: index);
+      _lastPosition = Duration.zero;
+      _lastDuration = null;
+      _emitPositionDuration();
+      _preloadedIndex = -1;
+      final next = index + 1;
+      if (next < _reels.length) {
+        _preloadPlayer
+            .setUrl(_reels[next].audioUrl)
+            .then((_) {
+              if (!_disposed) _preloadedIndex = next;
+            })
+            .catchError((e) {
+              if (!_isIgnorableAudioException(e))
+                debugPrint('ReelsAudioController preload error: $e');
+            });
+      }
     } catch (e) {
       if (_isIgnorableAudioException(e)) return;
       debugPrint('ReelsAudioController prepareReelAt error: $e');
@@ -97,43 +123,74 @@ class ReelsAudioController {
     final gen = ++_generation;
 
     if (index == _currentReelIndex) {
+      state.value = state.value.copyWith(currentIndex: index);
+      _emitPositionDuration();
       if (state.value.isPlaying) return;
       await _resume(gen);
       return;
     }
 
-    if (index == _preparedReelIndex) {
-      _preparedReelIndex = -1;
+    // Next reel was preloaded: stop old main, swap roles, play new main instantly (Instagram-like cut).
+    if (index == _preloadedIndex) {
+      _preloadedIndex = -1;
       _currentReelIndex = index;
       state.value = state.value.copyWith(currentIndex: index);
       _lastPosition = Duration.zero;
+      _lastDuration = null;
       _emitPositionDuration();
+      _unsubscribe();
+      final previousMain = _mainPlayer;
+      _mainIsA = !_mainIsA;
+      await previousMain
+          .stop(); // stop previous reel so we never hear it on the new reel (instant cut)
+      if (gen != _generation || _disposed) return;
+      _subscribeTo(_mainPlayer);
       try {
-        await _player.play();
+        await _mainPlayer.play();
         if (gen != _generation || _disposed) return;
         state.value = state.value.copyWith(isPlaying: true);
       } catch (e) {
         if (_isIgnorableAudioException(e)) return;
         if (gen == _generation) _onError?.call(e);
       }
+      final next = index + 1;
+      if (next < _reels.length) {
+        _preloadPlayer
+            .setUrl(_reels[next].audioUrl)
+            .then((_) {
+              if (!_disposed) _preloadedIndex = next;
+            })
+            .catchError((_) {});
+      }
       return;
     }
 
-    // Don't call stop() before setUrl - setUrl replaces the source and avoids
-    // leaving the player in a bad state on some platforms.
+    // Load and play on main; preload next. Stop current so we never hear wrong reel.
     final url = _reels[index].audioUrl;
     try {
       if (gen != _generation) return;
-      await _player.setUrl(url);
+      await _mainPlayer.stop();
+      if (gen != _generation || _disposed) return;
+      await _mainPlayer.setUrl(url);
       if (gen != _generation || _disposed) return;
       _currentReelIndex = index;
+      _preloadedIndex = -1;
       state.value = state.value.copyWith(currentIndex: index);
       _lastPosition = Duration.zero;
       _lastDuration = null;
       _emitPositionDuration();
-      await _player.play();
+      await _mainPlayer.play();
       if (gen != _generation || _disposed) return;
       state.value = state.value.copyWith(isPlaying: true);
+      final next = index + 1;
+      if (next < _reels.length) {
+        _preloadPlayer
+            .setUrl(_reels[next].audioUrl)
+            .then((_) {
+              if (!_disposed) _preloadedIndex = next;
+            })
+            .catchError((_) {});
+      }
     } catch (e) {
       if (_isIgnorableAudioException(e)) return;
       if (gen == _generation) _onError?.call(e);
@@ -142,7 +199,7 @@ class ReelsAudioController {
 
   Future<void> _resume(int gen) async {
     try {
-      await _player.play();
+      await _mainPlayer.play();
       if (gen == _generation && !_disposed) {
         state.value = state.value.copyWith(isPlaying: true);
       }
@@ -156,7 +213,19 @@ class ReelsAudioController {
     if (_disposed) return;
     _wasPlayingBeforeAppPause = state.value.isPlaying;
     try {
-      await _player.pause();
+      await _mainPlayer.pause();
+    } catch (e) {
+      if (_isIgnorableAudioException(e)) return;
+    }
+    state.value = state.value.copyWith(isPlaying: false);
+  }
+
+  /// Call when app goes to background so we resume playback when app returns.
+  Future<void> pauseForAppBackground() async {
+    if (_disposed) return;
+    if (_currentReelIndex >= 0) _wasPlayingBeforeAppPause = true;
+    try {
+      await _mainPlayer.pause();
     } catch (e) {
       if (_isIgnorableAudioException(e)) return;
     }
@@ -167,7 +236,7 @@ class ReelsAudioController {
     if (_disposed || _currentReelIndex < 0 || !_wasPlayingBeforeAppPause)
       return;
     try {
-      await _player.play();
+      await _mainPlayer.play();
     } catch (e) {
       if (_isIgnorableAudioException(e)) return;
     }
@@ -177,11 +246,11 @@ class ReelsAudioController {
   Future<void> togglePlayPause() async {
     if (_disposed || _currentReelIndex < 0) return;
     if (state.value.isPlaying) {
-      await _player.pause();
+      await _mainPlayer.pause();
       state.value = state.value.copyWith(isPlaying: false);
     } else {
       try {
-        await _player.play();
+        await _mainPlayer.play();
         state.value = state.value.copyWith(isPlaying: true);
       } catch (e) {
         if (!_isIgnorableAudioException(e)) _onError?.call(e);
@@ -189,8 +258,19 @@ class ReelsAudioController {
     }
   }
 
-  void attach() {
-    _playerSub = _player.playerStateStream.listen((s) {
+  void _unsubscribe() {
+    _playerSub?.cancel();
+    _playerSub = null;
+    _positionSub?.cancel();
+    _positionSub = null;
+    _durationSub?.cancel();
+    _durationSub = null;
+    _stopProgressTimer();
+  }
+
+  void _subscribeTo(AudioPlayer player) {
+    _unsubscribe();
+    _playerSub = player.playerStateStream.listen((s) {
       if (_disposed) return;
       state.value = state.value.copyWith(isPlaying: s.playing);
       if (s.playing) {
@@ -199,21 +279,27 @@ class ReelsAudioController {
         _stopProgressTimer();
       }
     });
-    _positionSub = _player.positionStream.listen((p) {
+    _positionSub = player.positionStream.listen((p) {
       _lastPosition = p;
       _emitPositionDuration();
     });
-    _durationSub = _player.durationStream.listen((d) {
+    _durationSub = player.durationStream.listen((d) {
       _lastDuration = d;
       _emitPositionDuration();
     });
   }
 
+  void attach() {
+    _playerA.setLoopMode(LoopMode.one);
+    _playerB.setLoopMode(LoopMode.one);
+    _subscribeTo(_mainPlayer);
+  }
+
   void _startProgressTimer() {
     _stopProgressTimer();
     _progressTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (_disposed || !_player.playing) return;
-      _lastPosition = _player.position;
+      if (_disposed || !_mainPlayer.playing) return;
+      _lastPosition = _mainPlayer.position;
       _emitPositionDuration();
     });
   }
@@ -227,10 +313,8 @@ class ReelsAudioController {
     if (_disposed) return;
     _disposed = true;
     _generation++;
-    _stopProgressTimer();
-    _playerSub?.cancel();
-    _positionSub?.cancel();
-    _durationSub?.cancel();
-    _player.dispose();
+    _unsubscribe();
+    _playerA.dispose();
+    _playerB.dispose();
   }
 }

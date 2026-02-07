@@ -1,103 +1,190 @@
-import 'dart:convert';
+import 'dart:io';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
+
 import '../../../../core/config/app_config.dart';
 import '../../../../core/errors/auth_exceptions.dart';
+import '../../../../core/network/dio_client.dart';
+import '../models/list_user_item.dart';
 import '../models/user_model.dart';
 
 /**
  * Auth Remote Data Source
- * Handles API calls to backend for authentication
+ * Handles API calls to backend for authentication. Uses [DioClient] for HTTP;
+ * success (2xx) is handled in one place; only error mapping is done here.
  */
 class AuthRemoteDataSource {
-  final http.Client client;
+  AuthRemoteDataSource({DioClient? dioClient})
+    : _client = dioClient ?? DioClient();
 
-  AuthRemoteDataSource({http.Client? client}) : client = client ?? http.Client();
+  final DioClient _client;
 
-  /// Sign in with Firebase ID token
-  /// Returns UserModel if user exists, or null if user not found
+  /// Sign in with Firebase ID token.
+  /// Returns UserModel if user exists, or null if user not found.
   Future<UserModel?> signIn(String idToken) async {
     try {
-      final response = await client.post(
-        Uri.parse('${AppConfig.baseUrl}${AppConfig.signInEndpoint}'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'idToken': idToken}),
+      final response = await _client.post<Map<String, dynamic>>(
+        AppConfig.signInEndpoint,
+        data: {'idToken': idToken},
       );
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body);
-        
-        // Check if user exists
-        if (data['exists'] == true && data['user'] != null) {
-          return UserModel.fromJson(data['user']);
-        } else if (data['exists'] == false) {
-          // User not found - return null to trigger sign-up flow
-          return null;
-        }
-      } else if (response.statusCode == 401) {
-        throw SignInException('Invalid credentials');
-      } else {
-        // Log the response for debugging
-        debugPrint('Sign in failed with status ${response.statusCode}: ${response.body}');
-        throw SignInException('Sign in failed: ${response.statusCode}');
+      final data = response.data;
+      if (data == null) return null;
+      if (data['exists'] == true && data['user'] != null) {
+        return UserModel.fromJson(data['user'] as Map<String, dynamic>);
       }
+      if (data['exists'] == false) return null;
+      return null;
+    } on DioException catch (e) {
+      if (DioClient.getStatusCode(e) == 401) {
+        throw SignInException('Invalid credentials');
+      }
+      debugPrint(
+        'Sign in failed: ${e.response?.statusCode} ${e.response?.data}',
+      );
+      throw SignInException(DioClient.getErrorMessage(e, 'Sign in failed'));
     } catch (e) {
       if (e is SignInException) rethrow;
       throw SignInException('Network error: ${e.toString()}');
     }
-    return null;
   }
 
-  /// Sign up with Firebase ID token and consent
+  /// Sign up with Firebase ID token and consent.
   Future<UserModel> signUp(String idToken, bool consent) async {
     try {
-      final response = await client.post(
-        Uri.parse('${AppConfig.baseUrl}${AppConfig.signUpEndpoint}'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'idToken': idToken,
-          'consent': consent,
-        }),
+      final response = await _client.post<Map<String, dynamic>>(
+        AppConfig.signUpEndpoint,
+        data: {'idToken': idToken, 'consent': consent},
       );
-
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['user'] != null) {
-          return UserModel.fromJson(data['user']);
-        }
-      } else if (response.statusCode == 400) {
-        final error = jsonDecode(response.body);
-        throw SignUpException(error['message'] ?? 'Sign up failed');
-      } else {
-        throw SignUpException('Sign up failed: ${response.statusCode}');
+      final data = response.data;
+      if (data != null && data['user'] != null) {
+        return UserModel.fromJson(data['user'] as Map<String, dynamic>);
       }
+      throw SignUpException('Unexpected response from server');
+    } on DioException catch (e) {
+      if (DioClient.getStatusCode(e) == 400) {
+        final msg = e.response?.data;
+        final message = msg is Map && msg['message'] != null
+            ? msg['message'].toString()
+            : 'Sign up failed';
+        throw SignUpException(message);
+      }
+      throw SignUpException(DioClient.getErrorMessage(e, 'Sign up failed'));
     } catch (e) {
       if (e is SignUpException) rethrow;
       throw SignUpException('Network error: ${e.toString()}');
     }
-    throw SignUpException('Unexpected error during sign up');
   }
 
-  /// Verify Firebase token
+  /// Update profile (displayName and optional photo). Requires valid token.
+  Future<UserModel> updateProfile(
+    String idToken,
+    String displayName, {
+    File? photoFile,
+  }) async {
+    try {
+      final map = <String, dynamic>{'displayName': displayName.trim()};
+      if (photoFile != null &&
+          photoFile.path.isNotEmpty &&
+          await photoFile.exists()) {
+        final filename = photoFile.path
+            .replaceAll(RegExp(r'[/\\]'), '/')
+            .split('/')
+            .last;
+        map['photo'] = await MultipartFile.fromFile(
+          photoFile.path,
+          filename: filename.contains('.') ? filename : 'image.jpg',
+        );
+      }
+      final formData = FormData.fromMap(map);
+      final response = await _client.dio.patch<Map<String, dynamic>>(
+        AppConfig.profileUpdateEndpoint,
+        data: formData,
+        options: Options(
+          headers: {'Authorization': 'Bearer $idToken'},
+          contentType: 'multipart/form-data',
+        ),
+      );
+      final data = response.data;
+      if (data != null) return UserModel.fromJson(data);
+      throw ProfileUpdateException('Profile update failed');
+    } on DioException catch (e) {
+      if (DioClient.getStatusCode(e) == 400) {
+        final body = e.response?.data;
+        final message = body is Map && body['message'] != null
+            ? (body['message'] is List
+                  ? (body['message'] as List).join(' ')
+                  : body['message'].toString())
+            : 'Invalid profile data';
+        throw ProfileUpdateException(message);
+      }
+      if (DioClient.getStatusCode(e) == 401) {
+        throw ProfileUpdateException('Please sign in again');
+      }
+      debugPrint(
+        'Profile update failed: ${e.response?.statusCode} ${e.response?.data}',
+      );
+      throw ProfileUpdateException(
+        DioClient.getErrorMessage(e, 'Profile update failed'),
+      );
+    } catch (e) {
+      if (e is ProfileUpdateException) rethrow;
+      throw ProfileUpdateException('Network error: ${e.toString()}');
+    }
+  }
+
+  /// List users (Find people). Requires valid token. Excludes current user.
+  Future<List<ListUserItem>> getUsers(String idToken) async {
+    try {
+      final response = await _client.get<List<dynamic>>(
+        AppConfig.usersListEndpoint,
+        headers: {'Authorization': 'Bearer $idToken'},
+      );
+      final list = response.data;
+      if (list is List) {
+        return list
+            .map((e) => ListUserItem.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      return [];
+    } on DioException catch (e) {
+      if (DioClient.getStatusCode(e) == 401) {
+        throw SignInException('Please sign in again');
+      }
+      return [];
+    } catch (e) {
+      if (e is SignInException) rethrow;
+      rethrow;
+    }
+  }
+
+  /// Update FCM device token for push notifications (incoming call, etc.)
+  Future<void> updateFcmToken(String idToken, String? fcmToken) async {
+    try {
+      await _client.post(
+        AppConfig.fcmTokenEndpoint,
+        data: {'fcmToken': fcmToken},
+        headers: {'Authorization': 'Bearer $idToken'},
+      );
+    } on DioException catch (e) {
+      debugPrint('FCM token update failed: ${e.response?.statusCode}');
+    }
+  }
+
+  /// Verify Firebase token.
   Future<Map<String, dynamic>> verifyToken(String idToken) async {
     try {
-      final response = await client.post(
-        Uri.parse('${AppConfig.baseUrl}${AppConfig.verifyTokenEndpoint}'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'idToken': idToken}),
+      final response = await _client.post<Map<String, dynamic>>(
+        AppConfig.verifyTokenEndpoint,
+        data: {'idToken': idToken},
       );
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        throw TokenException('Token verification failed');
-      }
+      final data = response.data;
+      if (data != null) return data;
+      throw TokenException('Token verification failed');
+    } on DioException catch (e) {
+      throw TokenException(
+        DioClient.getErrorMessage(e, 'Token verification failed'),
+      );
     } catch (e) {
       if (e is TokenException) rethrow;
       throw TokenException('Network error: ${e.toString()}');

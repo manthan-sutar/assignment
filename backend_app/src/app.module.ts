@@ -10,6 +10,7 @@ import { AuthModule } from './auth/auth.module';
 import { SignalingModule } from './signaling/signaling.module';
 import { UsersModule } from './users/users.module';
 import { ReelsModule } from './reels/reels.module';
+import { LiveModule } from './live/live.module';
 import { FirebaseModule } from './common/firebase.module';
 import { User } from './users/entities/user.entity';
 import { Reel } from './reels/entities/reel.entity';
@@ -60,6 +61,7 @@ import { Reel } from './reels/entities/reel.entity';
     SignalingModule,
     UsersModule,
     ReelsModule,
+    LiveModule,
   ],
   controllers: [AppController],
   providers: [AppService],

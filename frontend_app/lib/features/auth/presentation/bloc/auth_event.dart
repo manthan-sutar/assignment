@@ -48,3 +48,13 @@ class SignOutRequested extends AuthEvent {
 class CheckAuthStatus extends AuthEvent {
   const CheckAuthStatus();
 }
+
+/// Update profile (onboarding: name and optional photo)
+class ProfileUpdateRequested extends AuthEvent {
+  final String displayName;
+  final String? photoPath;
+  const ProfileUpdateRequested(this.displayName, {this.photoPath});
+
+  @override
+  List<Object?> get props => [displayName, photoPath];
+}

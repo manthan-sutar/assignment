@@ -92,56 +92,85 @@ class AgoraRtcService {
   bool get isInChannel =>
       _engine != null && _connectionState == AgoraConnectionState.connected;
 
+  void _safeAddEvent(AgoraRtcEvent event) {
+    if (_disposed) return;
+    try {
+      _eventController.add(event);
+    } catch (_) {
+      // Stream may be closed after dispose (e.g. hot restart / late native callback)
+    }
+  }
+
   /// Initialize the RTC engine with [appId]. Call once before [joinChannel].
-  Future<void> initialize(String appId) async {
+  /// Use [useLiveBroadcasting] true for live streaming (one host, many audience); false for 1:1 calls.
+  Future<void> initialize(
+    String appId, {
+    bool useLiveBroadcasting = false,
+  }) async {
     if (_disposed) return;
     if (_engine != null) {
-      debugPrint('AgoraRtcService: already initialized');
+      debugPrint('[Agora] already initialized');
       return;
     }
 
+    final profile = useLiveBroadcasting
+        ? ChannelProfileType.channelProfileLiveBroadcasting
+        : ChannelProfileType.channelProfileCommunication;
+    debugPrint('[Agora] initialize appId=$appId profile=$profile');
     _engine = createAgoraRtcEngine();
     await _engine!.initialize(
       RtcEngineContext(
         appId: appId,
-        channelProfile: ChannelProfileType.channelProfileCommunication,
+        channelProfile: profile,
+        logConfig: const LogConfig(level: LogLevel.logLevelInfo),
       ),
     );
+    await _engine!.setLogLevel(LogLevel.logLevelInfo);
+    debugPrint('[Agora] engine initialized, logLevel=INFO');
 
     _engine!.registerEventHandler(
       RtcEngineEventHandler(
         onJoinChannelSuccess: (RtcConnection connection, int elapsed) {
           if (_disposed) return;
+          debugPrint(
+            '[Agora] onJoinChannelSuccess uid=${connection.localUid} channelId=${connection.channelId} elapsed=${elapsed}ms',
+          );
           _connectionState = AgoraConnectionState.connected;
-          _eventController.add(
+          _safeAddEvent(
             AgoraJoinSuccess(
               uid: connection.localUid ?? 0,
               channelId: connection.channelId ?? '',
               elapsed: elapsed,
             ),
           );
-          _eventController.add(
+          _safeAddEvent(
             AgoraConnectionStateChanged(AgoraConnectionState.connected),
           );
         },
         onLeaveChannel: (RtcConnection connection, RtcStats stats) {
           if (_disposed) return;
+          debugPrint(
+            '[Agora] onLeaveChannel uid=${connection.localUid} channelId=${connection.channelId}',
+          );
           _connectionState = AgoraConnectionState.disconnected;
           _remoteUids.clear();
-          _eventController.add(
+          _safeAddEvent(
             AgoraLeave(
               uid: connection.localUid ?? 0,
               channelId: connection.channelId ?? '',
             ),
           );
-          _eventController.add(
+          _safeAddEvent(
             AgoraConnectionStateChanged(AgoraConnectionState.disconnected),
           );
         },
         onUserJoined: (RtcConnection connection, int remoteUid, int elapsed) {
           if (_disposed) return;
+          debugPrint(
+            '[Agora] onUserJoined remoteUid=$remoteUid elapsed=${elapsed}ms',
+          );
           _remoteUids.add(remoteUid);
-          _eventController.add(AgoraRemoteUserJoined(remoteUid));
+          _safeAddEvent(AgoraRemoteUserJoined(remoteUid));
         },
         onUserOffline:
             (
@@ -150,8 +179,11 @@ class AgoraRtcService {
               UserOfflineReasonType reason,
             ) {
               if (_disposed) return;
+              debugPrint(
+                '[Agora] onUserOffline remoteUid=$remoteUid reason=$reason',
+              );
               _remoteUids.remove(remoteUid);
-              _eventController.add(AgoraRemoteUserOffline(remoteUid, reason));
+              _safeAddEvent(AgoraRemoteUserOffline(remoteUid, reason));
             },
         onConnectionStateChanged:
             (
@@ -160,6 +192,9 @@ class AgoraRtcService {
               ConnectionChangedReasonType reason,
             ) {
               if (_disposed) return;
+              debugPrint(
+                '[Agora] onConnectionStateChanged state=$state reason=$reason',
+              );
               switch (state) {
                 case ConnectionStateType.connectionStateDisconnected:
                   _connectionState = AgoraConnectionState.disconnected;
@@ -177,7 +212,7 @@ class AgoraRtcService {
                   _connectionState = AgoraConnectionState.failed;
                   break;
               }
-              _eventController.add(
+              _safeAddEvent(
                 AgoraConnectionStateChanged(
                   _connectionState,
                   reason.toString(),
@@ -186,29 +221,40 @@ class AgoraRtcService {
             },
         onTokenPrivilegeWillExpire: (RtcConnection connection, String token) {
           if (_disposed) return;
-          _eventController.add(const AgoraTokenPrivilegeWillExpire());
+          debugPrint('[Agora] onTokenPrivilegeWillExpire');
+          _safeAddEvent(const AgoraTokenPrivilegeWillExpire());
         },
         onError: (ErrorCodeType err, String msg) {
           if (_disposed) return;
-          _eventController.add(AgoraErrorEvent(msg, err.index));
+          debugPrint('[Agora] onError code=${err.index} msg=$msg');
+          _safeAddEvent(AgoraErrorEvent(msg, err.index));
         },
       ),
     );
   }
 
   /// Join channel with [token], [channelId], and [uid]. [role] sets publish vs subscribe.
+  /// Use [useLiveBroadcasting] true for live streaming; must match [initialize].
   Future<void> joinChannel({
     required String token,
     required String channelId,
     required int uid,
     AgoraClientRole role = AgoraClientRole.publisher,
+    bool useLiveBroadcasting = false,
   }) async {
     if (_disposed || _engine == null) {
+      debugPrint('[Agora] joinChannel failed: not initialized');
       throw StateError('AgoraRtcService: initialize first');
     }
 
+    final profile = useLiveBroadcasting
+        ? ChannelProfileType.channelProfileLiveBroadcasting
+        : ChannelProfileType.channelProfileCommunication;
+    debugPrint(
+      '[Agora] joinChannel channelId=$channelId uid=$uid role=$role profile=$profile tokenLength=${token.length}',
+    );
     _connectionState = AgoraConnectionState.connecting;
-    _eventController.add(
+    _safeAddEvent(
       const AgoraConnectionStateChanged(AgoraConnectionState.connecting),
     );
 
@@ -222,17 +268,21 @@ class AgoraRtcService {
       channelId: channelId,
       uid: uid,
       options: ChannelMediaOptions(
-        channelProfile: ChannelProfileType.channelProfileCommunication,
+        channelProfile: profile,
         clientRoleType: clientRole,
         publishMicrophoneTrack: role == AgoraClientRole.publisher,
         autoSubscribeAudio: true,
       ),
+    );
+    debugPrint(
+      '[Agora] joinChannel() call returned (success => onJoinChannelSuccess)',
     );
   }
 
   /// Leave the current channel.
   Future<void> leaveChannel() async {
     if (_engine == null) return;
+    debugPrint('[Agora] leaveChannel()');
     await _engine!.leaveChannel();
   }
 
@@ -257,14 +307,28 @@ class AgoraRtcService {
   }
 
   /// Release the engine. Call when done (e.g. after leaving channel).
+  /// Safe to call multiple times and on hot restart.
   Future<void> dispose() async {
     if (_disposed) return;
+    debugPrint('[Agora] dispose()');
     _disposed = true;
-    await _engine?.leaveChannel();
-    await _engine?.release();
+    try {
+      await _engine?.leaveChannel();
+    } catch (e) {
+      debugPrint('[Agora] leaveChannel during dispose: $e');
+    }
+    try {
+      await _engine?.release();
+    } catch (e) {
+      debugPrint('[Agora] release during dispose: $e');
+    }
     _engine = null;
     _remoteUids.clear();
     _connectionState = AgoraConnectionState.disconnected;
-    await _eventController.close();
+    try {
+      await _eventController.close();
+    } catch (e) {
+      debugPrint('[Agora] eventController.close: $e');
+    }
   }
 }

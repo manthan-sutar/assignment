@@ -1,3 +1,4 @@
+import '../entities/display_user_entity.dart';
 import '../entities/user_entity.dart';
 
 /**
@@ -21,6 +22,10 @@ abstract class AuthRepository {
   /// Get current authenticated user
   Future<UserEntity?> getCurrentUser();
 
+  /// Get current Firebase ID token (for API calls, FCM token upload, etc.)
+  /// Returns null if not authenticated.
+  Future<String?> getCurrentIdToken();
+
   /// Sign out current user
   Future<void> signOut();
 
@@ -29,4 +34,15 @@ abstract class AuthRepository {
 
   /// Get Firebase user info (for sign-up flow)
   Future<Map<String, String>?> getFirebaseUserInfo();
+
+  /// Update profile (displayName and optional photo). Returns updated user.
+  /// [photoPath] is the local file path of the picked image; null to skip photo.
+  Future<UserEntity> updateProfile(String displayName, {String? photoPath});
+
+  /// List users for Find people (excludes current user). Returns id, displayName, photoURL.
+  Future<List<DisplayUserEntity>> getUsers();
+
+  /// Update FCM device token for push notifications (incoming call, etc.).
+  /// Call after login and when FCM token refreshes.
+  Future<void> updateFcmToken(String? fcmToken);
 }
