@@ -79,29 +79,42 @@ class ReelCard extends StatelessWidget {
           ),
         ),
         Positioned(
-          top: 0,
+          bottom: 0,
           right: 0,
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.only(right: 20, top: 20),
+              padding: const EdgeInsets.only(right: 20, bottom: 80),
               child: ValueListenableBuilder<Map<int, bool>>(
                 valueListenable: controller.sourceState,
                 builder: (_, sourceMap, __) {
                   final useNative = sourceMap[index] ?? false;
                   return Material(
-                    color: Colors.black26,
+                    color: useNative
+                        ? Colors.deepPurple.withOpacity(0.8)
+                        : Colors.black26,
                     borderRadius: BorderRadius.circular(24),
-                    child: IconButton(
-                      icon: Icon(
-                        Icons.translate,
-                        color: Colors.white,
-                        size: 24,
-                      ),
-                      tooltip: useNative ? 'Native audio' : 'Preferred audio',
-                      onPressed: () => controller.toggleAudioSourceForReel(index),
-                      style: IconButton.styleFrom(
-                        padding: const EdgeInsets.all(8),
-                        minimumSize: const Size(44, 44),
+                    child: Container(
+                      decoration: useNative
+                          ? BoxDecoration(
+                              borderRadius: BorderRadius.circular(24),
+                              border: Border.all(
+                                color: Colors.deepPurple.shade300,
+                                width: 2,
+                              ),
+                            )
+                          : null,
+                      child: IconButton(
+                        icon: Icon(
+                          Icons.translate,
+                          color: useNative ? Colors.white : Colors.white70,
+                          size: 24,
+                        ),
+                        tooltip: useNative ? 'Native audio' : 'Preferred audio',
+                        onPressed: () => controller.toggleAudioSourceForReel(index),
+                        style: IconButton.styleFrom(
+                          padding: const EdgeInsets.all(8),
+                          minimumSize: const Size(44, 44),
+                        ),
                       ),
                     ),
                   );
