@@ -78,6 +78,9 @@ class ReelsAudioController {
   /// Ensures only one playReelAt runs at a time (prevents two players playing after fast swipes).
   Future<void>? _playReelAtGuard;
 
+  /// Ensures only one toggleAudioSourceForReel runs at a time (prevents rapid toggle conflicts).
+  Future<void>? _toggleGuard;
+
   /// During stress scrolling, only the latest requested index is applied; older queued calls skip.
   int? _latestRequestedIndex;
 
@@ -414,29 +417,52 @@ class ReelsAudioController {
   /// Toggles audio source (native vs preferred) for the reel at [index].
   /// If that reel is currently playing, reloads and restarts with the new URL.
   /// State persists per reel until screen is closed.
+  /// Guards against rapid successive calls to prevent race conditions.
   Future<void> toggleAudioSourceForReel(int index) async {
     if (_disposed || index < 0 || index >= _reels.length) return;
-    _reelSourceMap[index] = !(_reelSourceMap[index] ?? false);
-    _notifySourceState();
 
-    if (index != _currentReelIndex) {
-      // Update preload for this index if it's prev or next.
-      if (index == _currentReelIndex - 1) {
-        _playerPrev.setUrl(_getAudioUrlForReel(index)).catchError((_) => null);
-      } else if (index == _currentReelIndex + 1) {
-        _playerNext.setUrl(_getAudioUrlForReel(index)).catchError((_) => null);
-      }
+    // Wait for any in-flight toggle to complete
+    final previous = _toggleGuard;
+    final completer = Completer<void>();
+    _toggleGuard = completer.future;
+    await previous;
+
+    if (_disposed) {
+      completer.complete();
       return;
     }
 
-    // Currently playing this reel: reload with new URL and restart.
-    final url = _getAudioUrlForReel(index);
-    if (url.isEmpty) return;
     try {
+      _reelSourceMap[index] = !(_reelSourceMap[index] ?? false);
+      _notifySourceState();
+
+      if (index != _currentReelIndex) {
+        // Update preload for this index if it's prev or next.
+        if (index == _currentReelIndex - 1) {
+          _playerPrev.setUrl(_getAudioUrlForReel(index)).catchError((_) => null);
+        } else if (index == _currentReelIndex + 1) {
+          _playerNext.setUrl(_getAudioUrlForReel(index)).catchError((_) => null);
+        }
+        completer.complete();
+        return;
+      }
+
+      // Currently playing this reel: reload with new URL and restart.
+      final url = _getAudioUrlForReel(index);
+      if (url.isEmpty) {
+        completer.complete();
+        return;
+      }
       await _playerCurrent.stop();
-      if (_disposed) return;
+      if (_disposed) {
+        completer.complete();
+        return;
+      }
       await _playerCurrent.setUrl(url);
-      if (_disposed) return;
+      if (_disposed) {
+        completer.complete();
+        return;
+      }
       _lastPosition = Duration.zero;
       _lastDuration = null;
       _emitPositionDuration();
@@ -445,9 +471,13 @@ class ReelsAudioController {
         state.value = state.value.copyWith(isPlaying: true);
       }
     } catch (e) {
-      if (_isIgnorableAudioException(e)) return;
+      if (_isIgnorableAudioException(e)) {
+        completer.complete();
+        return;
+      }
       _onError?.call(e);
     }
+    completer.complete();
   }
 
   Future<void> togglePlayPause() async {
