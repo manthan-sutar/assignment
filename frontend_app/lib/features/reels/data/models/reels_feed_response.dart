@@ -105,16 +105,19 @@ class FeedItemModel {
 
   ReelModel toReelModel(int sortOrder) {
     final createdAt = stitchedAt ?? uploadedAt;
+    final defaultAudioUrl = preferredSignedUrl ?? nativeSignedUrl;
     return ReelModel(
       id: jamId,
       title: titleTextGcpPath?.isNotEmpty == true
           ? titleTextGcpPath!
           : 'Reel',
-      audioUrl: nativeSignedUrl,
+      audioUrl: defaultAudioUrl,
       imageUrl: ReelModel.imageUrlPlaceholder,
       durationSeconds: 0,
       sortOrder: sortOrder,
       createdAt: DateTime.tryParse(createdAt ?? '') ?? DateTime.now(),
+      nativeSignedUrl: nativeSignedUrl,
+      preferredSignedUrl: preferredSignedUrl,
     );
   }
 }
