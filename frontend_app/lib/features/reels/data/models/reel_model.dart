@@ -10,6 +10,8 @@ class ReelModel extends ReelEntity {
     required super.durationSeconds,
     required super.sortOrder,
     required super.createdAt,
+    super.nativeSignedUrl,
+    super.preferredSignedUrl,
   });
 
   /// Placeholder when API returns null for imageUrl (e.g. admin-uploaded reels).
@@ -18,10 +20,13 @@ class ReelModel extends ReelEntity {
 
   factory ReelModel.fromJson(Map<String, dynamic> json) {
     final imageUrl = json['imageUrl'];
+    final audioUrl = json['audioUrl'] as String? ?? '';
+    final preferred = json['preferredSignedUrl'] as String?;
+    final native = json['nativeSignedUrl'] as String?;
     return ReelModel(
       id: json['id'] as String,
       title: json['title'] as String,
-      audioUrl: json['audioUrl'] as String,
+      audioUrl: preferred ?? native ?? audioUrl,
       imageUrl: imageUrl is String && imageUrl.isNotEmpty
           ? imageUrl
           : imageUrlPlaceholder,
@@ -30,6 +35,8 @@ class ReelModel extends ReelEntity {
       createdAt:
           DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
+      nativeSignedUrl: native,
+      preferredSignedUrl: preferred,
     );
   }
 

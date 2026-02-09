@@ -53,6 +53,9 @@ class ReelsAudioController {
 
   List<ReelEntity> _reels = const [];
 
+  /// Per-reel audio source: true = native, false = preferred. Defaults to false (preferred).
+  final Map<int, bool> _reelSourceMap = {};
+
   final List<AudioPlayer> _players = [
     AudioPlayer(),
     AudioPlayer(),
@@ -75,6 +78,9 @@ class ReelsAudioController {
   /// Ensures only one playReelAt runs at a time (prevents two players playing after fast swipes).
   Future<void>? _playReelAtGuard;
 
+  /// Ensures only one toggleAudioSourceForReel runs at a time (prevents rapid toggle conflicts).
+  Future<void>? _toggleGuard;
+
   /// During stress scrolling, only the latest requested index is applied; older queued calls skip.
   int? _latestRequestedIndex;
 
@@ -94,7 +100,16 @@ class ReelsAudioController {
       positionDuration =
       ValueNotifier((position: Duration.zero, duration: null));
 
+  /// Per-reel audio source for UI: true = native, false = preferred. Listen to rebuild toggle.
+  final ValueNotifier<Map<int, bool>> sourceState =
+      ValueNotifier<Map<int, bool>>({});
+
   bool _disposed = false;
+
+  void _notifySourceState() {
+    if (_disposed) return;
+    sourceState.value = Map<int, bool>.from(_reelSourceMap);
+  }
 
   void _emitPositionDuration() {
     if (_disposed) return;
@@ -105,13 +120,35 @@ class ReelsAudioController {
     _reels = reels;
   }
 
+  bool _isNativeSource(int index) => _reelSourceMap[index] ?? false;
+
+  /// Whether the reel at [index] is using native audio (true) or preferred (false).
+  bool isNativeSourceForReel(int index) => _isNativeSource(index);
+
+  /// Effective audio URL for [index] based on current source toggle (native vs preferred).
+  String _getAudioUrlForReel(int index) {
+    if (index < 0 || index >= _reels.length) return '';
+    final reel = _reels[index];
+    final useNative = _isNativeSource(index);
+    if (useNative) {
+      return (reel.nativeSignedUrl?.isNotEmpty == true
+              ? reel.nativeSignedUrl
+              : null) ??
+          reel.audioUrl;
+    }
+    return (reel.preferredSignedUrl?.isNotEmpty == true
+            ? reel.preferredSignedUrl
+            : null) ??
+        reel.audioUrl;
+  }
+
   /// Load current reel and preload prev + next so both directions start instantly.
   /// Uses raw URL so setUrl is immediate; cache prefetches in background for future plays.
   Future<void> prepareReelAt(int index) async {
     if (_disposed || index < 0 || index >= _reels.length) return;
     _audioCache?.prefetchAround(index, _reels);
     try {
-      final url = _reels[index].audioUrl;
+      final url = _getAudioUrlForReel(index);
       if (url.isEmpty || _disposed) return;
       await _playerCurrent.setUrl(url);
       if (_disposed) return;
@@ -124,7 +161,7 @@ class ReelsAudioController {
       // Preload prev/next with raw URL so setUrl runs immediately (no cache lookup delay).
       final prevIndex = index - 1;
       if (prevIndex >= 0) {
-        _playerPrev.setUrl(_reels[prevIndex].audioUrl).catchError((e) {
+        _playerPrev.setUrl(_getAudioUrlForReel(prevIndex)).catchError((e) {
           if (!_isIgnorableAudioException(e))
             debugPrint('ReelsAudioController preload prev error: $e');
           return null;
@@ -132,7 +169,7 @@ class ReelsAudioController {
       }
       final nextIndex = index + 1;
       if (nextIndex < _reels.length) {
-        _playerNext.setUrl(_reels[nextIndex].audioUrl).catchError((e) {
+        _playerNext.setUrl(_getAudioUrlForReel(nextIndex)).catchError((e) {
           if (!_isIgnorableAudioException(e))
             debugPrint('ReelsAudioController preload next error: $e');
           return null;
@@ -214,7 +251,7 @@ class ReelsAudioController {
       }
       final nextIndex = index + 1;
       if (nextIndex < _reels.length) {
-        _playerNext.setUrl(_reels[nextIndex].audioUrl).catchError((_) => null);
+        _playerNext.setUrl(_getAudioUrlForReel(nextIndex)).catchError((_) => null);
       }
       completer.complete();
       return;
@@ -257,7 +294,7 @@ class ReelsAudioController {
       }
       final prevIndex = index - 1;
       if (prevIndex >= 0) {
-        _playerPrev.setUrl(_reels[prevIndex].audioUrl).catchError((_) => null);
+        _playerPrev.setUrl(_getAudioUrlForReel(prevIndex)).catchError((_) => null);
       }
       completer.complete();
       return;
@@ -275,7 +312,7 @@ class ReelsAudioController {
         completer.complete();
         return;
       }
-      final url = _reels[index].audioUrl;
+      final url = _getAudioUrlForReel(index);
       if (url.isEmpty || gen != _generation || _disposed) {
         completer.complete();
         return;
@@ -299,11 +336,11 @@ class ReelsAudioController {
 
       final prevIndex = index - 1;
       if (prevIndex >= 0) {
-        _playerPrev.setUrl(_reels[prevIndex].audioUrl).catchError((_) => null);
+        _playerPrev.setUrl(_getAudioUrlForReel(prevIndex)).catchError((_) => null);
       }
       final nextIndex = index + 1;
       if (nextIndex < _reels.length) {
-        _playerNext.setUrl(_reels[nextIndex].audioUrl).catchError((_) => null);
+        _playerNext.setUrl(_getAudioUrlForReel(nextIndex)).catchError((_) => null);
       }
     } catch (e) {
       if (_isIgnorableAudioException(e)) {
@@ -375,6 +412,72 @@ class ReelsAudioController {
       if (_isIgnorableAudioException(e)) return;
     }
     state.value = state.value.copyWith(isPlaying: true);
+  }
+
+  /// Toggles audio source (native vs preferred) for the reel at [index].
+  /// If that reel is currently playing, reloads and restarts with the new URL.
+  /// State persists per reel until screen is closed.
+  /// Guards against rapid successive calls to prevent race conditions.
+  Future<void> toggleAudioSourceForReel(int index) async {
+    if (_disposed || index < 0 || index >= _reels.length) return;
+
+    // Wait for any in-flight toggle to complete
+    final previous = _toggleGuard;
+    final completer = Completer<void>();
+    _toggleGuard = completer.future;
+    await previous;
+
+    if (_disposed) {
+      completer.complete();
+      return;
+    }
+
+    try {
+      _reelSourceMap[index] = !(_reelSourceMap[index] ?? false);
+      _notifySourceState();
+
+      if (index != _currentReelIndex) {
+        // Update preload for this index if it's prev or next.
+        if (index == _currentReelIndex - 1) {
+          _playerPrev.setUrl(_getAudioUrlForReel(index)).catchError((_) => null);
+        } else if (index == _currentReelIndex + 1) {
+          _playerNext.setUrl(_getAudioUrlForReel(index)).catchError((_) => null);
+        }
+        completer.complete();
+        return;
+      }
+
+      // Currently playing this reel: reload with new URL and restart.
+      final url = _getAudioUrlForReel(index);
+      if (url.isEmpty) {
+        completer.complete();
+        return;
+      }
+      await _playerCurrent.stop();
+      if (_disposed) {
+        completer.complete();
+        return;
+      }
+      await _playerCurrent.setUrl(url);
+      if (_disposed) {
+        completer.complete();
+        return;
+      }
+      _lastPosition = Duration.zero;
+      _lastDuration = null;
+      _emitPositionDuration();
+      await _playerCurrent.play();
+      if (!_disposed) {
+        state.value = state.value.copyWith(isPlaying: true);
+      }
+    } catch (e) {
+      if (_isIgnorableAudioException(e)) {
+        completer.complete();
+        return;
+      }
+      _onError?.call(e);
+    }
+    completer.complete();
   }
 
   Future<void> togglePlayPause() async {
@@ -458,6 +561,8 @@ class ReelsAudioController {
     if (_disposed) return;
     _disposed = true;
     _generation++;
+    _reelSourceMap.clear();
+    sourceState.value = {};
     _unsubscribe();
     for (final p in _players) {
       p.dispose();

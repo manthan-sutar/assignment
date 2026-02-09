@@ -34,7 +34,7 @@ class ReelCard extends StatelessWidget {
                 width: 32,
                 height: 32,
                 child: CircularProgressIndicator(
-                  color: Colors.deepPurple,
+                  color: Colors.black45,
                   strokeWidth: 2.5,
                 ),
               ),
@@ -76,6 +76,41 @@ class ReelCard extends StatelessWidget {
             reel: reel,
             index: index,
             controller: controller,
+          ),
+        ),
+        Positioned(
+          bottom: 0,
+          right: 0,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 20, bottom: 80),
+              child: ValueListenableBuilder<Map<int, bool>>(
+                valueListenable: controller.sourceState,
+                builder: (_, sourceMap, __) {
+                  final useNative = sourceMap[index] ?? false;
+                  return Material(
+                    color: useNative
+                        ? Colors.black.withOpacity(0.6)
+                        : Colors.black26,
+                    borderRadius: BorderRadius.circular(24),
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.translate,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                      tooltip: useNative ? 'Native audio' : 'Preferred audio',
+                      onPressed: () =>
+                          controller.toggleAudioSourceForReel(index),
+                      style: IconButton.styleFrom(
+                        padding: const EdgeInsets.all(8),
+                        minimumSize: const Size(44, 44),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ],
