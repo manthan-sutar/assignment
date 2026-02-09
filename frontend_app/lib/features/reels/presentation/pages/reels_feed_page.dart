@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/widgets/app_loading.dart';
+import '../../data/cache/reel_audio_cache.dart';
 import '../bloc/reels_bloc.dart';
 import '../bloc/reels_event.dart';
 import '../bloc/reels_state.dart';
@@ -22,11 +25,16 @@ class ReelsFeedPage extends StatefulWidget {
 class _ReelsFeedPageState extends State<ReelsFeedPage>
     with WidgetsBindingObserver {
   late final PageController _pageController;
+  late final ReelAudioCache _audioCache;
   late final ReelsAudioController _audioController;
   List<ReelEntity> _reels = [];
   bool _hasTriggeredFirstPlay = false;
   int _lastVisibleIndex = -1;
   bool _pausedByHold = false;
+
+  /// When page hasn't changed for this long, we treat it as settled and play that reel.
+  Timer? _pageSettleTimer;
+  static const _pageSettleMs = 120;
 
   @override
   void initState() {
@@ -34,7 +42,11 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
     WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(viewportFraction: 1.0);
     _pageController.addListener(_onPageControllerChanged);
-    _audioController = ReelsAudioController(onError: _showAudioError);
+    _audioCache = ReelAudioCache();
+    _audioController = ReelsAudioController(
+      onError: _showAudioError,
+      audioCache: _audioCache,
+    );
     _audioController.attach();
     context.read<ReelsBloc>().add(const ReelsLoadRequested());
   }
@@ -43,9 +55,32 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
     if (_reels.isEmpty) return;
     final page = _pageController.page ?? 0;
     final index = page.round().clamp(0, _reels.length - 1);
-    if (index != _lastVisibleIndex) {
-      _lastVisibleIndex = index;
-      _onReelBecameVisible(index);
+    _maybeLoadMore(index);
+    // Page-settle: when index hasn't changed for _pageSettleMs, play that reel.
+    // Works for both slow scroll and stress scroll (we fire once they stop).
+    _pageSettleTimer?.cancel();
+    _pageSettleTimer = Timer(const Duration(milliseconds: _pageSettleMs), () {
+      if (!mounted || _reels.isEmpty) return;
+      final currentPage = _pageController.page ?? 0.0;
+      final settledIndex = currentPage.round().clamp(0, _reels.length - 1);
+      if (settledIndex != _lastVisibleIndex) {
+        _lastVisibleIndex = settledIndex;
+        _onReelBecameVisible(settledIndex);
+      }
+      _pageSettleTimer = null;
+    });
+  }
+
+  void _maybeLoadMore(int currentIndex) {
+    final bloc = context.read<ReelsBloc>();
+    final state = bloc.state;
+    if (state is! ReelsLoaded ||
+        !state.hasMore ||
+        state.isLoadingMore ||
+        state.reels.isEmpty) return;
+    final threshold = state.reels.length - 2;
+    if (currentIndex >= threshold && threshold >= 0) {
+      bloc.add(const ReelsLoadMoreRequested());
     }
   }
 
@@ -78,6 +113,8 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
 
   @override
   void dispose() {
+    _pageSettleTimer?.cancel();
+    _pageSettleTimer = null;
     _pageController.removeListener(_onPageControllerChanged);
     _pageController.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -94,10 +131,15 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
   }
 
   void _resumeIfPausedByHold() {
-    if (_pausedByHold) {
-      _pausedByHold = false;
-      _audioController.resume();
-    }
+    if (!_pausedByHold) return;
+    _pausedByHold = false;
+    // If user scrolled to another reel while holding, don't resume the old one —
+    // let scroll-end handler play the new reel.
+    if (_reels.isEmpty) return;
+    final page = _pageController.page?.round() ?? 0;
+    final visibleIndex = page.clamp(0, _reels.length - 1);
+    if (visibleIndex != _audioController.state.value.currentIndex) return;
+    _audioController.resume();
   }
 
   @override
@@ -182,7 +224,9 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
 
               if (state is ReelsLoaded) {
                 final reels = state.reels;
-                if (reels.isEmpty) {
+                final isLoadingMore = state.isLoadingMore;
+                final hasMore = state.hasMore;
+                if (reels.isEmpty && !isLoadingMore) {
                   return Center(
                     child: Text(
                       'No reels yet',
@@ -198,7 +242,7 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
 
                 // Prepare first reel then play so audio starts immediately (no delay).
                 _audioController.setReels(reels);
-                if (!_hasTriggeredFirstPlay) {
+                if (!_hasTriggeredFirstPlay && reels.isNotEmpty) {
                   _hasTriggeredFirstPlay = true;
                   _lastVisibleIndex = 0;
                   _audioController.prepareReelAt(0).then((_) {
@@ -208,6 +252,8 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
                 }
 
                 // Vertical carousel + overlay. Hold to pause, release to resume.
+                // When loading more, show an extra "loading" item at the end.
+                final itemCount = reels.length + (hasMore && isLoadingMore ? 1 : 0);
                 return Stack(
                   fit: StackFit.expand,
                   children: [
@@ -220,38 +266,35 @@ class _ReelsFeedPageState extends State<ReelsFeedPage>
                       },
                       onPointerUp: (_) => _resumeIfPausedByHold(),
                       onPointerCancel: (_) => _resumeIfPausedByHold(),
-                      child: NotificationListener<ScrollNotification>(
-                        onNotification: (notification) {
-                          if (notification is ScrollEndNotification) {
-                            final page = _pageController.page?.round() ?? 0;
-                            final index = page.clamp(0, reels.length - 1);
-                            if (index != _lastVisibleIndex) {
-                              _lastVisibleIndex = index;
-                              _onReelBecameVisible(index);
-                            }
-                          }
-                          return false;
-                        },
-                        child: PageView.builder(
+                      child: PageView.builder(
                           controller: _pageController,
                           scrollDirection: Axis.vertical,
                           physics: const PageScrollPhysics(
                             parent: BouncingScrollPhysics(),
                           ),
-                          itemCount: reels.length,
+                          itemCount: itemCount,
                           itemBuilder: (context, index) {
-                            final reel = reels[index];
-                            return SizedBox.expand(
-                              child: ReelCard(
-                                reel: reel,
-                                index: index,
-                                controller: _audioController,
+                            if (index < reels.length) {
+                              final reel = reels[index];
+                              return SizedBox.expand(
+                                child: ReelCard(
+                                  reel: reel,
+                                  index: index,
+                                  controller: _audioController,
+                                ),
+                              );
+                            }
+                            return Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: CircularProgressIndicator(
+                                  color: Colors.grey.shade400,
+                                ),
                               ),
                             );
                           },
                         ),
                       ),
-                    ),
                   ],
                 );
               }

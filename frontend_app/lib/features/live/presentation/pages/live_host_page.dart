@@ -65,15 +65,25 @@ class _LiveHostPageState extends State<LiveHostPage>
     return BlocProvider<LiveHostBloc>.value(
       value: _bloc,
       child: BlocListener<LiveHostBloc, LiveHostState>(
-        listenWhen: (prev, state) => state is LiveHostEnded,
+        listenWhen: (prev, state) =>
+            state is LiveHostEnded || state is LiveHostError,
         listener: (context, state) {
-          if (state is LiveHostEnded) Navigator.of(context).pop();
+          if (!context.mounted) return;
+          if (state is LiveHostEnded) {
+            Navigator.of(context).pop();
+          } else if (state is LiveHostError) {
+            // Pop back to hub and propagate error message so it can be shown there.
+            Navigator.of(context).pop(state.message);
+          }
         },
         child: PopScope(
           canPop: false,
           onPopInvokedWithResult: (didPop, result) async {
             if (didPop) return;
-            context.read<LiveHostBloc>().add(const LiveHostEndRequested());
+            // Don't leave while joining — avoids accidental back closing the screen.
+            final bloc = context.read<LiveHostBloc>();
+            if (bloc.state is LiveHostJoining) return;
+            bloc.add(const LiveHostLeaveRequested());
           },
           child: BlocBuilder<LiveHostBloc, LiveHostState>(
             builder: (context, state) {
@@ -85,6 +95,14 @@ class _LiveHostPageState extends State<LiveHostPage>
                 appBar: AppBar(
                   backgroundColor: Colors.transparent,
                   elevation: 0,
+                  leading: IconButton(
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    onPressed: joining
+                        ? null
+                        : () => context.read<LiveHostBloc>().add(
+                              const LiveHostLeaveRequested(),
+                            ),
+                  ),
                   title: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -132,7 +150,7 @@ class _LiveHostPageState extends State<LiveHostPage>
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        if (error != null)
+                        if (error != null) ...[
                           Padding(
                             padding: const EdgeInsets.all(16),
                             child: Text(
@@ -142,7 +160,33 @@ class _LiveHostPageState extends State<LiveHostPage>
                               ),
                               textAlign: TextAlign.center,
                             ),
-                          )
+                          ),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                final repo = context.read<LiveRepository>();
+                                final newData = await repo.getHostToken();
+                                if (newData != null && context.mounted) {
+                                  context.read<LiveHostBloc>().add(
+                                    LiveHostJoinRequested(newData),
+                                  );
+                                }
+                              },
+                              icon: const Icon(Icons.refresh_rounded, size: 20),
+                              label: const Text('Retry with new token'),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ]
                         else if (joining)
                           AppLoading.withLabel(
                             context,

@@ -36,7 +36,11 @@ class FcmService {
     }
     _currentToken = await messaging.getToken();
     if (_currentToken != null) {
-      await _uploadTokenToBackend();
+      try {
+        await _uploadTokenToBackend();
+      } catch (e) {
+        debugPrint('FCM initial uploadTokenToBackend: $e');
+      }
     }
 
     _onMessageSub = FirebaseMessaging.onMessage.listen((message) {
@@ -45,20 +49,44 @@ class FcmService {
 
     _onTokenRefreshSub = messaging.onTokenRefresh.listen((token) {
       _currentToken = token;
-      _uploadTokenToBackend();
+      _uploadTokenToBackend().catchError((e) {
+        debugPrint('FCM token refresh upload failed: $e');
+      });
     });
   }
 
   /// Upload current FCM token to backend. Safe to call when not authenticated (no-op).
   /// Call after login and when token is refreshed (handled in [initialize]).
+  /// On first install, FCM may not have a token yet; we fetch it if needed and never send null
+  /// (sending null would clear the server token and break incoming calls).
   Future<void> uploadTokenToBackend() => _uploadTokenToBackend();
 
-  Future<void> _uploadTokenToBackend() async {
+  /// Subscribe to topic "live_sessions" to receive "someone went live" notifications.
+  /// Call when user is authenticated.
+  Future<void> subscribeToLiveTopic() async {
     try {
-      await _authRepository.updateFcmToken(_currentToken);
+      await FirebaseMessaging.instance.subscribeToTopic('live_sessions');
     } catch (e) {
-      debugPrint('FCM uploadTokenToBackend: $e');
+      debugPrint('FCM subscribeToLiveTopic: $e');
     }
+  }
+
+  /// Uploads current FCM token to backend. Throws on failure so callers can retry.
+  /// Never sends null to the server when we intend to register (only clearTokenOnBackend clears).
+  /// On first install FCM token may not be ready yet; we try to fetch it once if missing.
+  Future<void> _uploadTokenToBackend() async {
+    String? token = _currentToken;
+    if (token == null || token.isEmpty) {
+      token = await FirebaseMessaging.instance.getToken();
+      if (token != null && token.isNotEmpty) _currentToken = token;
+    }
+    if (token == null || token.isEmpty) {
+      debugPrint(
+        'FCM: no token available yet (e.g. first install); skipping upload to avoid clearing server token',
+      );
+      return;
+    }
+    await _authRepository.updateFcmToken(token);
   }
 
   /// Call on sign-out to clear token on server (optional).

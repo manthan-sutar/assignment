@@ -18,12 +18,20 @@ class ReelsLoading extends ReelsState {
 }
 
 class ReelsLoaded extends ReelsState {
-  const ReelsLoaded(this.reels);
+  const ReelsLoaded({
+    required this.reels,
+    this.nextCursor,
+    this.isLoadingMore = false,
+  });
 
   final List<ReelEntity> reels;
+  final String? nextCursor;
+  final bool isLoadingMore;
+
+  bool get hasMore => nextCursor != null && nextCursor!.isNotEmpty;
 
   @override
-  List<Object?> get props => [reels];
+  List<Object?> get props => [reels, nextCursor, isLoadingMore];
 }
 
 class ReelsError extends ReelsState {

@@ -176,14 +176,23 @@ class SignalingService {
   }
 
   /// Connect and register with current Firebase ID token.
-  /// Call when user is authenticated. Safe to call again if already connected.
+  /// Completes only after server acknowledges registration (or timeout), so the
+  /// callee is ready to receive incoming_call before the UI proceeds.
+  /// On first install / right after sign-in, idToken can be briefly unavailable; we retry once.
   Future<void> connect() async {
     if (_socket?.connected == true) {
       _cancelReconnect();
       return;
     }
-    final idToken = await _authRepository.getCurrentIdToken();
-    if (idToken == null || idToken.isEmpty) return;
+    var idToken = await _authRepository.getCurrentIdToken();
+    if (idToken == null || idToken.isEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      idToken = await _authRepository.getCurrentIdToken();
+    }
+    if (idToken == null || idToken.isEmpty) {
+      debugPrint('Signaling: no idToken available, skipping connect');
+      return;
+    }
 
     _reconnectEnabled = true;
     _reconnectTimer?.cancel();
@@ -197,8 +206,10 @@ class SignalingService {
           .build(),
     );
 
+    final completer = Completer<void>();
+
     _socket!.onConnect((_) {
-      debugPrint('Signaling: connected');
+      debugPrint('Signaling: connected to ${AppConfig.signalingUrl}');
       _reconnectAttempts = 0;
       _socket!.emit('register', {'idToken': idToken});
     });
@@ -208,6 +219,10 @@ class SignalingService {
       if (!ok) {
         final err = data is Map ? (data['error'] ?? 'unknown') : 'invalid response';
         debugPrint('Signaling: register failed: $err');
+        if (!completer.isCompleted) completer.completeError(Exception(err));
+      } else {
+        debugPrint('Signaling: registered (will receive incoming_call, call_accepted, call_declined, call_cancelled)');
+        if (!completer.isCompleted) completer.complete();
       }
     });
 
@@ -234,10 +249,23 @@ class SignalingService {
       debugPrint('Signaling: disconnected');
       _scheduleReconnect();
     });
-    _socket!.onConnectError((e) => debugPrint('Signaling: connect error $e'));
+    _socket!.onConnectError((e) {
+      debugPrint('Signaling: connect error $e');
+      if (!completer.isCompleted) completer.completeError(e);
+    });
     _socket!.onError((e) => debugPrint('Signaling: error $e'));
 
     _socket!.connect();
+
+    try {
+      await completer.future.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => TimeoutException('Signaling registration timeout'),
+      );
+    } on TimeoutException catch (e) {
+      debugPrint('Signaling: $e');
+      // Don't rethrow: allow UI to show so user can retry; socket may still register later
+    }
   }
 
   void disconnect() {

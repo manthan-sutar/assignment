@@ -21,6 +21,11 @@ class LiveHubEndMyLive extends LiveHubEvent {
   const LiveHubEndMyLive();
 }
 
+/// Re-enter host screen (user left but stream is still live).
+class LiveHubReenterHost extends LiveHubEvent {
+  const LiveHubReenterHost();
+}
+
 /// Real-time: a host started a live stream (from signaling).
 class LiveHubSessionStarted extends LiveHubEvent {
   final LiveSessionEntity session;

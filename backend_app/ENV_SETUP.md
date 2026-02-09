@@ -58,6 +58,13 @@ AGORA_APP_CERTIFICATE=abcdef0123456789abcdef0123456789
 
 Restart the backend after changing `.env`. Calls will then be able to get RTC tokens.
 
+## Live audio streaming (visibility to all users)
+
+Live sessions are stored **in memory** on the backend. For every user to see the same “live now” list:
+
+- **Single instance:** Run only one backend process. If you run multiple (e.g. load balancer or several terminals), each has its own memory and others won’t see your stream.
+- **Same URL on all devices:** In the Flutter app, `AppConfig.baseUrlOverride` (e.g. `http://192.168.31.50:3000`) must point to that single backend. All phones/emulators should use the same IP so they hit the same server.
+
 ## Firebase Setup Instructions
 
 1. Go to Firebase Console (https://console.firebase.google.com/)
@@ -69,7 +76,7 @@ Restart the backend after changing `.env`. Calls will then be able to get RTC to
    - `project_id` → `FIREBASE_PROJECT_ID`
    - `private_key` → `FIREBASE_PRIVATE_KEY` (keep the quotes and \n characters)
    - `client_email` → `FIREBASE_CLIENT_EMAIL`
-6. For reels admin upload, set **FIREBASE_STORAGE_BUCKET** to your Storage bucket name (Firebase Console > Storage: use the bucket host, e.g. `audioreel.firebasestorage.app` or `your-project-id.appspot.com`).
+7. For reels admin upload, set **FIREBASE_STORAGE_BUCKET** to your Storage bucket name (Firebase Console > Storage: use the bucket host, e.g. `audioreel.firebasestorage.app` or `your-project-id.appspot.com`).
 
 ## Database Setup
 

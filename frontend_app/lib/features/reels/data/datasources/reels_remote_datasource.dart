@@ -3,47 +3,70 @@ import 'package:flutter/foundation.dart';
 
 import '../../../../core/config/app_config.dart';
 import '../../../../core/errors/reels_exceptions.dart';
-import '../../../../core/network/dio_client.dart';
-import '../models/reel_model.dart';
+import '../../../../core/network/reels_feed_dio_client.dart';
+import '../models/reels_feed_response.dart';
 
-/// Fetches reels from the backend. Uses [DioClient]; 2xx is success.
+/// Fetches audio reels from the reels feed API (separate server).
+/// Uses [ReelsFeedDioClient]. Configure [AppConfig.reelsFeedBaseUrl],
+/// [AppConfig.reelsFeedBearerToken], and [AppConfig.reelsFeedEndpoint].
 class ReelsRemoteDataSource {
-  ReelsRemoteDataSource({DioClient? dioClient})
-    : _client = dioClient ?? DioClient();
+  ReelsRemoteDataSource({ReelsFeedDioClient? reelsFeedClient})
+      : _client = reelsFeedClient ?? ReelsFeedDioClient();
 
-  final DioClient _client;
+  final ReelsFeedDioClient _client;
 
-  Future<List<ReelModel>> fetchReels(String? idToken) async {
-    if (idToken == null || idToken.isEmpty) {
-      throw ReelsUnauthorizedException();
+  /// Fetches a page of reels. [cursor] is UTC time for pagination (omit for first page).
+  /// [limit] is the number of audios per page.
+  Future<ReelsFeedPageResult> fetchReels({
+    String? cursor,
+    int? limit,
+  }) async {
+    final endpoint = AppConfig.reelsFeedEndpoint;
+    if (endpoint.isEmpty) {
+      throw ReelsServerException(
+        'Reels feed endpoint not set. Set AppConfig.reelsFeedEndpoint in app_config.dart.',
+      );
+    }
+    final baseUrl = AppConfig.reelsFeedBaseUrl;
+    if (baseUrl.isEmpty) {
+      throw ReelsServerException(
+        'Reels feed base URL not set. Set AppConfig.reelsFeedBaseUrl in app_config.dart.',
+      );
+    }
+    final effectiveLimit = limit ?? AppConfig.reelsFeedLimit;
+    final queryParams = <String, dynamic>{'limit': effectiveLimit};
+    if (cursor != null && cursor.isNotEmpty) {
+      queryParams['cursor'] = cursor;
     }
     try {
-      final response = await _client.get<List<dynamic>>(
-        AppConfig.reelsEndpoint,
-        headers: {'Authorization': 'Bearer $idToken'},
+      final response = await _client.get<Map<String, dynamic>>(
+        endpoint,
+        queryParameters: queryParams,
       );
-      final decoded = response.data;
-      if (decoded is! List) {
+      final data = response.data;
+      if (data == null) {
         throw ReelsServerException('Invalid response format');
       }
-      return decoded
-          .map((e) => ReelModel.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final feed = ReelsFeedResponse.fromJson(data);
+      return ReelsFeedPageResult(
+        reels: feed.toReelModels(),
+        nextCursor: feed.nextCursor,
+      );
     } on DioException catch (e) {
-      if (DioClient.getStatusCode(e) == 401) {
+      if (ReelsFeedDioClient.getStatusCode(e) == 401) {
         throw ReelsUnauthorizedException();
       }
       if ((e.response?.statusCode ?? 0) >= 500) {
         throw ReelsServerException('Server error. Try again later.');
       }
-      final message = DioClient.getErrorMessage(e, 'Failed to load reels');
+      final message =
+          ReelsFeedDioClient.getErrorMessage(e, 'Failed to load reels');
       throw ReelsException(message, statusCode: e.response?.statusCode);
     } catch (e) {
       if (e is ReelsException) rethrow;
       debugPrint('Reels fetch error: $e');
-      final baseUrl = AppConfig.baseUrl;
       final cause = e.toString().replaceFirst(RegExp(r'^Exception: '), '');
-      throw ReelsNetworkException('Cannot reach $baseUrl. $cause');
+      throw ReelsNetworkException('Cannot reach reels feed. $cause');
     }
   }
 }

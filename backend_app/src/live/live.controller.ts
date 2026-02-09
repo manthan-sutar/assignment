@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  NotFoundException,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { Request } from 'express';
 import { FirebaseAuthGuard } from '../auth/guards/firebase-auth.guard';
 import { LiveService } from './services/live.service';
@@ -22,6 +30,20 @@ export class LiveController {
   async startLive(@Req() req: RequestWithUser): Promise<StartLiveResponseDto> {
     const hostUid = req.user?.uid ?? '';
     return this.liveService.startLive(hostUid);
+  }
+
+  /**
+   * Get a new host token for your current live session (re-enter host screen).
+   * GET /live/host-token
+   */
+  @Get('host-token')
+  getHostToken(@Req() req: RequestWithUser): StartLiveResponseDto {
+    const hostUid = req.user?.uid ?? '';
+    const result = this.liveService.getHostToken(hostUid);
+    if (!result) {
+      throw new NotFoundException('You are not live');
+    }
+    return result;
   }
 
   /**

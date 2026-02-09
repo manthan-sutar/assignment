@@ -44,7 +44,16 @@ class _CallScreenPageState extends State<CallScreenPage> {
       child: BlocListener<ActiveCallBloc, ActiveCallState>(
         listenWhen: (prev, state) => state is ActiveCallEnded,
         listener: (context, state) {
-          if (state is ActiveCallEnded) Navigator.of(context).pop();
+          if (state is ActiveCallEnded) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Call ended'),
+                behavior: SnackBarBehavior.floating,
+                duration: Duration(seconds: 2),
+              ),
+            );
+            Navigator.of(context).pop();
+          }
         },
         child: BlocBuilder<ActiveCallBloc, ActiveCallState>(
           builder: (context, state) {

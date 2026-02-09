@@ -5,9 +5,13 @@ import { randomUUID } from 'crypto';
 import { User } from '../../users/entities/user.entity';
 import { AgoraTokenService } from '../../calls/services/agora-token.service';
 import { SignalingGateway } from '../../signaling/signaling/signaling.gateway';
+import { FirebaseService } from '../../common/services/firebase.service';
 import { LiveSessionStore } from './live-session.store';
 import { StartLiveResponseDto } from '../dto/start-live-response.dto';
 import { LiveSessionDto } from '../dto/live-session.dto';
+
+/** FCM topic all app users subscribe to for "someone went live" notifications. */
+export const LIVE_TOPIC = 'live_sessions';
 
 @Injectable()
 export class LiveService {
@@ -17,6 +21,7 @@ export class LiveService {
     private readonly agoraTokenService: AgoraTokenService,
     private readonly sessionStore: LiveSessionStore,
     private readonly signalingGateway: SignalingGateway,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   /**
@@ -62,6 +67,24 @@ export class LiveService {
     };
     this.signalingGateway.broadcastToAll('live_started', dto);
 
+    this.firebaseService
+      .sendToTopic(
+        LIVE_TOPIC,
+        {
+          type: 'live_started',
+          sessionId: dto.sessionId,
+          channelName: dto.channelName,
+          hostUserId: dto.hostUserId,
+          hostDisplayName: dto.hostDisplayName,
+          startedAt: dto.startedAt,
+        },
+        {
+          title: 'Live now',
+          body: `${dto.hostDisplayName} is live`,
+        },
+      )
+      .catch((err) => console.error('LiveService sendToTopic:', err));
+
     return {
       sessionId,
       channelName,
@@ -86,6 +109,29 @@ export class LiveService {
       channelName: session.channelName,
     });
     return { sessionId: session.sessionId };
+  }
+
+  /**
+   * Get a new host token for the current user's active live session.
+   * Use when the host navigated away but the stream is still running (e.g. re-enter host screen).
+   */
+  getHostToken(hostFirebaseUid: string): StartLiveResponseDto | null {
+    const session = this.sessionStore.getByHostUserId(hostFirebaseUid);
+    if (!session) return null;
+    const uid = this.uidFromFirebaseUid(hostFirebaseUid);
+    const tokenResult = this.agoraTokenService.generateRtcToken(
+      session.channelName,
+      uid,
+      'publisher',
+    );
+    return {
+      sessionId: session.sessionId,
+      channelName: session.channelName,
+      token: tokenResult.token,
+      appId: tokenResult.appId,
+      uid: tokenResult.uid,
+      expiresIn: tokenResult.expiresIn,
+    };
   }
 
   /**

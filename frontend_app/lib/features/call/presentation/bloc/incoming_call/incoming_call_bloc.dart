@@ -49,8 +49,8 @@ class IncomingCallBloc extends Bloc<IncomingCallEvent, IncomingCallState> {
     try {
       await _callRepository.declineOffer(_callId);
       emit(const IncomingCallDeclined());
-    } catch (_) {
-      emit(const IncomingCallDeclined());
+    } catch (e) {
+      emit(IncomingCallError(e is CallException ? e.message : e.toString()));
     }
   }
 

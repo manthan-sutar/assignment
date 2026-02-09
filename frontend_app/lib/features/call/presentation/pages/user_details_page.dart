@@ -4,6 +4,8 @@ import '../../../../core/config/app_config.dart';
 import '../../../../features/auth/domain/entities/display_user_entity.dart';
 import '../../domain/repositories/call_repository.dart';
 import '../../data/services/call_permission_service.dart';
+import '../../data/services/fcm_service.dart';
+import '../../data/services/signaling_service.dart';
 import '../bloc/ringing/ringing_bloc.dart';
 import '../bloc/ringing/ringing_event.dart';
 import 'call_ringing_page.dart';
@@ -28,6 +30,22 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
     if (!granted) {
       _showMicrophoneDeniedDialog(context);
       return;
+    }
+    // Best-effort: ensure this device is fully ready to make/receive calls
+    // before creating the offer (fresh install / first login).
+    try {
+      final fcm = context.read<FcmService>();
+      await fcm.uploadTokenToBackend();
+    } catch (_) {
+      // Non-fatal: call can still proceed via signaling if available.
+    }
+    try {
+      final signaling = context.read<SignalingService>();
+      if (!signaling.isConnected) {
+        await signaling.connect();
+      }
+    } catch (_) {
+      // Non-fatal: FCM may still deliver incoming_call.
     }
     final callRepo = context.read<CallRepository>();
     Navigator.of(context)
@@ -173,9 +191,27 @@ class _ProfileHeader extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // Image or placeholder
+                // Image or placeholder (with error fallback so 404/CORS show initial)
                 if (resolvedPhotoUrl != null)
-                  Image.network(resolvedPhotoUrl!, fit: BoxFit.cover)
+                  Image.network(
+                    resolvedPhotoUrl!,
+                    fit: BoxFit.cover,
+                    width: size,
+                    height: size,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: Colors.deepPurple.shade50,
+                      child: Center(
+                        child: Text(
+                          initial,
+                          style: TextStyle(
+                            fontSize: size * 0.35,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.deepPurple.shade300,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
                 else
                   Container(
                     color: Colors.deepPurple.shade50,

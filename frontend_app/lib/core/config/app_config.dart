@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
  * Centralized configuration constants
  */
 class AppConfig {
-  /// Set to your computer's IP (e.g. 'http://192.168.1.100:3000') when running
-  /// on a physical device; leave null to use platform defaults.
+  /// Your computer's IP on the same WiFi so phones can reach the backend.
+  /// Change to your machine's local IP if different (e.g. from `ifconfig` / ipconfig).
   static const String? baseUrlOverride = null;
 
   /// Backend API base URL. Uses [baseUrlOverride] if set, otherwise picks the
@@ -21,14 +21,8 @@ class AppConfig {
     return 'http://localhost:3000'; // iOS simulator, macOS, etc.
   }
 
-  /// WebSocket URL for signaling (same host as API, ws scheme).
-  static String get signalingUrl {
-    final base = baseUrl;
-    if (base.startsWith('https://')) {
-      return 'wss://${base.substring(8)}';
-    }
-    return 'ws://${base.substring(7)}';
-  }
+  /// Socket.IO server URL for signaling. Use HTTP(S) base URL; socket_io_client handles protocol.
+  static String get signalingUrl => baseUrl;
 
   // API endpoints
   static const String signInEndpoint = '/auth/sign-in';
@@ -40,10 +34,23 @@ class AppConfig {
   static const String usersListEndpoint = '/auth/users';
   static const String reelsEndpoint = '/reels';
 
+  // --- Reels feed (audio reels) — separate server ---
+  /// Base URL for the reels/feeds API (different from main backend). Set manually.
+  static const String reelsFeedBaseUrl = 'http://35.200.252.238:8080/api/v1/';
+
+  /// Bearer token for reels feed API. Set manually.
+  static const String reelsFeedBearerToken =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3NfdXVpZCI6ImI5NmFiOTZkLWNkOTItNDk2MS1hYmQ1LTI4ZWRmYTdjZjE0MCIsImF1dGhvcml6ZWQiOnRydWUsImV4cCI6MTc3MzE2ODIzNSwidXNlcl9pZCI6ImQ2YjZlZGM0LTM0N2YtNDNjMy1iZDkwLWYxZDgyZmY1ZWQ3YSJ9.QEWaS1ZdZ9eZ2ByQtLCP4WW43rkf3SCLyKmuJ18Izes';
+
+  /// Path for the feeds endpoint on the reels server (e.g. /feeds). Set manually.
+  static const String reelsFeedEndpoint = 'user/user-feed';
+
+  /// Number of audio reels to fetch per page (query param [limit]).
+  static const int reelsFeedLimit = 10;
+
   /// Agora RTC token and config (calls & live audio streaming).
   static const String callsTokenEndpoint = '/calls/token';
   static const String callsConfigEndpoint = '/calls/config';
-  static const String callsAgoraStatusEndpoint = '/calls/agora-status';
   static const String callsOfferEndpoint = '/calls/offer';
   static String callsOfferGetEndpoint(String callId) => '/calls/offer/$callId';
   static String callsOfferAcceptEndpoint(String callId) =>
@@ -57,4 +64,5 @@ class AppConfig {
   static const String liveStartEndpoint = '/live/start';
   static const String liveEndEndpoint = '/live/end';
   static const String liveSessionsEndpoint = '/live/sessions';
+  static const String liveHostTokenEndpoint = '/live/host-token';
 }
