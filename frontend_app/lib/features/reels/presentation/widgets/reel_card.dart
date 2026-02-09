@@ -78,6 +78,38 @@ class ReelCard extends StatelessWidget {
             controller: controller,
           ),
         ),
+        Positioned(
+          top: 0,
+          right: 0,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 20, top: 20),
+              child: ValueListenableBuilder<Map<int, bool>>(
+                valueListenable: controller.sourceState,
+                builder: (_, sourceMap, __) {
+                  final useNative = sourceMap[index] ?? false;
+                  return Material(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(24),
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.translate,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                      tooltip: useNative ? 'Native audio' : 'Preferred audio',
+                      onPressed: () => controller.toggleAudioSourceForReel(index),
+                      style: IconButton.styleFrom(
+                        padding: const EdgeInsets.all(8),
+                        minimumSize: const Size(44, 44),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
