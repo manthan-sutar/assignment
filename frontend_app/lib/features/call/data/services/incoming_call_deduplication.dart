@@ -13,11 +13,16 @@ class IncomingCallDeduplication {
     _incomingCallUIVisible = value;
   }
 
-  /// Returns true only the first time for this [callId]; then false so caller can skip showing UI.
+  /// Returns true only the first time for this [callId]; then false so we don't show twice (e.g. WS + FCM).
   static bool shouldShow(String callId) {
     if (callId.isEmpty) return false;
     if (_shownCallIds.contains(callId)) return false;
     _shownCallIds.add(callId);
     return true;
+  }
+
+  /// Call when incoming call screen is dismissed so we don't leak IDs. Same [callId] won't ring again.
+  static void onIncomingCallDismissed(String callId) {
+    _shownCallIds.remove(callId);
   }
 }

@@ -142,6 +142,8 @@ class CallRemoteDataSource {
       if (DioClient.getStatusCode(e) == 404) {
         throw CallException('Call not found');
       }
+      final msg = DioClient.getErrorMessage(e, 'Failed to decline call');
+      throw CallException(msg, statusCode: e.response?.statusCode);
     }
   }
 

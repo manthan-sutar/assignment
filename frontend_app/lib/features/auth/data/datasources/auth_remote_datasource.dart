@@ -159,6 +159,7 @@ class AuthRemoteDataSource {
   }
 
   /// Update FCM device token for push notifications (incoming call, etc.)
+  /// Throws on failure so callers can retry.
   Future<void> updateFcmToken(String idToken, String? fcmToken) async {
     try {
       await _client.post(
@@ -167,7 +168,10 @@ class AuthRemoteDataSource {
         headers: {'Authorization': 'Bearer $idToken'},
       );
     } on DioException catch (e) {
-      debugPrint('FCM token update failed: ${e.response?.statusCode}');
+      debugPrint(
+        'FCM token update failed: status=${e.response?.statusCode} ${e.message}',
+      );
+      rethrow;
     }
   }
 

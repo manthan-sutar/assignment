@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../domain/repositories/auth_repository.dart';
 import 'auth_event.dart';
@@ -123,17 +124,16 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     }
   }
 
-  /// Handle sign out
+  /// Handle sign out — optimistic: switch to sign-in immediately, clean up in background.
   Future<void> _onSignOut(
     SignOutRequested event,
     Emitter<AuthState> emit,
   ) async {
-    emit(const AuthLoading());
+    emit(const AuthUnauthenticated());
     try {
       await _authRepository.signOut();
-      emit(const AuthUnauthenticated());
     } catch (e) {
-      emit(AuthError(_userFriendlyMessage(e)));
+      debugPrint('Auth signOut (background) failed: $e');
     }
   }
 

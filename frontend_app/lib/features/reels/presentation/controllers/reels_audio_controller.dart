@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 
+import '../../data/cache/reel_audio_cache.dart';
 import '../../domain/entities/reel_entity.dart';
 
 /// Callback for playback errors (e.g. to show SnackBar). Not called for cancelled/stale ops.
@@ -38,29 +39,45 @@ bool _isIgnorableAudioException(Object e) {
   return false;
 }
 
-/// Reels audio: two [AudioPlayer]s so the next reel is preloaded and starts instantly.
-/// Generation token prevents stale setUrl/play.
+/// Reels audio: three [AudioPlayer]s — prev, current, next. Current plays; prev/next are
+/// preloaded so both forward and backward swipes start instantly.
 class ReelsAudioController {
-  ReelsAudioController({ReelsAudioErrorCallback? onError}) : _onError = onError;
+  ReelsAudioController({
+    ReelsAudioErrorCallback? onError,
+    ReelAudioCache? audioCache,
+  })  : _onError = onError,
+        _audioCache = audioCache;
 
   final ReelsAudioErrorCallback? _onError;
+  final ReelAudioCache? _audioCache;
 
   List<ReelEntity> _reels = const [];
-  final AudioPlayer _playerA = AudioPlayer();
-  final AudioPlayer _playerB = AudioPlayer();
 
-  /// True when A is the active (playing) player, B is preload; false when B is active, A is preload.
-  bool _mainIsA = true;
+  final List<AudioPlayer> _players = [
+    AudioPlayer(),
+    AudioPlayer(),
+    AudioPlayer(),
+  ];
 
-  AudioPlayer get _mainPlayer => _mainIsA ? _playerA : _playerB;
-  AudioPlayer get _preloadPlayer => _mainIsA ? _playerB : _playerA;
+  /// Slot indices (0, 1, 2) for prev / current / next. Rotated on swipe.
+  int _slotPrev = 0;
+  int _slotCurrent = 1;
+  int _slotNext = 2;
+
+  AudioPlayer get _playerPrev => _players[_slotPrev];
+  AudioPlayer get _playerCurrent => _players[_slotCurrent];
+  AudioPlayer get _playerNext => _players[_slotNext];
 
   int _currentReelIndex = -1;
-
-  /// Index loaded in _preloadPlayer (-1 if none).
-  int _preloadedIndex = -1;
   int _generation = 0;
   bool _wasPlayingBeforeAppPause = false;
+
+  /// Ensures only one playReelAt runs at a time (prevents two players playing after fast swipes).
+  Future<void>? _playReelAtGuard;
+
+  /// During stress scrolling, only the latest requested index is applied; older queued calls skip.
+  int? _latestRequestedIndex;
+
   StreamSubscription<PlayerState>? _playerSub;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
@@ -74,7 +91,8 @@ class ReelsAudioController {
 
   /// Current position and duration for the playing reel (for progress bar).
   final ValueNotifier<({Duration position, Duration? duration})>
-  positionDuration = ValueNotifier((position: Duration.zero, duration: null));
+      positionDuration =
+      ValueNotifier((position: Duration.zero, duration: null));
 
   bool _disposed = false;
 
@@ -87,29 +105,38 @@ class ReelsAudioController {
     _reels = reels;
   }
 
-  /// Load a reel so [playReelAt] can start instantly; preloads next reel for instant switch.
+  /// Load current reel and preload prev + next so both directions start instantly.
+  /// Uses raw URL so setUrl is immediate; cache prefetches in background for future plays.
   Future<void> prepareReelAt(int index) async {
     if (_disposed || index < 0 || index >= _reels.length) return;
+    _audioCache?.prefetchAround(index, _reels);
     try {
-      await _mainPlayer.setUrl(_reels[index].audioUrl);
+      final url = _reels[index].audioUrl;
+      if (url.isEmpty || _disposed) return;
+      await _playerCurrent.setUrl(url);
       if (_disposed) return;
       _currentReelIndex = index;
       state.value = state.value.copyWith(currentIndex: index);
       _lastPosition = Duration.zero;
       _lastDuration = null;
       _emitPositionDuration();
-      _preloadedIndex = -1;
-      final next = index + 1;
-      if (next < _reels.length) {
-        _preloadPlayer
-            .setUrl(_reels[next].audioUrl)
-            .then((_) {
-              if (!_disposed) _preloadedIndex = next;
-            })
-            .catchError((e) {
-              if (!_isIgnorableAudioException(e))
-                debugPrint('ReelsAudioController preload error: $e');
-            });
+
+      // Preload prev/next with raw URL so setUrl runs immediately (no cache lookup delay).
+      final prevIndex = index - 1;
+      if (prevIndex >= 0) {
+        _playerPrev.setUrl(_reels[prevIndex].audioUrl).catchError((e) {
+          if (!_isIgnorableAudioException(e))
+            debugPrint('ReelsAudioController preload prev error: $e');
+          return null;
+        });
+      }
+      final nextIndex = index + 1;
+      if (nextIndex < _reels.length) {
+        _playerNext.setUrl(_reels[nextIndex].audioUrl).catchError((e) {
+          if (!_isIgnorableAudioException(e))
+            debugPrint('ReelsAudioController preload next error: $e');
+          return null;
+        });
       }
     } catch (e) {
       if (_isIgnorableAudioException(e)) return;
@@ -120,86 +147,195 @@ class ReelsAudioController {
   Future<void> playReelAt(int index) async {
     if (_disposed || index < 0 || index >= _reels.length) return;
 
+    _latestRequestedIndex = index;
+
+    final previous = _playReelAtGuard;
+    final completer = Completer<void>();
+    _playReelAtGuard = completer.future;
+    await previous; // wait for any in-flight transition to finish
+    if (_disposed) {
+      completer.complete();
+      return;
+    }
+    // Stress scroll: a newer playReelAt already requested a different index; skip this one.
+    if (_latestRequestedIndex != index) {
+      completer.complete();
+      return;
+    }
+
     final gen = ++_generation;
 
     if (index == _currentReelIndex) {
       state.value = state.value.copyWith(currentIndex: index);
       _emitPositionDuration();
-      if (state.value.isPlaying) return;
+      if (state.value.isPlaying) {
+        completer.complete();
+        return;
+      }
       await _resume(gen);
+      completer.complete();
       return;
     }
 
-    // Next reel was preloaded: stop old main, swap roles, play new main instantly (Instagram-like cut).
-    if (index == _preloadedIndex) {
-      _preloadedIndex = -1;
+    // Swipe forward: next becomes current, current becomes prev, prev becomes next (load new).
+    if (index == _currentReelIndex + 1) {
+      _audioCache?.prefetchAround(index, _reels);
       _currentReelIndex = index;
       state.value = state.value.copyWith(currentIndex: index);
       _lastPosition = Duration.zero;
       _lastDuration = null;
       _emitPositionDuration();
       _unsubscribe();
-      final previousMain = _mainPlayer;
-      _mainIsA = !_mainIsA;
-      await previousMain
-          .stop(); // stop previous reel so we never hear it on the new reel (instant cut)
-      if (gen != _generation || _disposed) return;
-      _subscribeTo(_mainPlayer);
+      await _playerCurrent.stop();
+      if (gen != _generation || _disposed) {
+        completer.complete();
+        return;
+      }
+      _rotateForward();
+      _subscribeTo(_playerCurrent);
       try {
-        await _mainPlayer.play();
-        if (gen != _generation || _disposed) return;
+        await _playerCurrent.seek(Duration.zero);
+        if (gen != _generation || _disposed) {
+          completer.complete();
+          return;
+        }
+        await _playerCurrent.play();
+        if (gen != _generation || _disposed) {
+          completer.complete();
+          return;
+        }
         state.value = state.value.copyWith(isPlaying: true);
       } catch (e) {
-        if (_isIgnorableAudioException(e)) return;
+        if (_isIgnorableAudioException(e)) {
+          completer.complete();
+          return;
+        }
         if (gen == _generation) _onError?.call(e);
       }
-      final next = index + 1;
-      if (next < _reels.length) {
-        _preloadPlayer
-            .setUrl(_reels[next].audioUrl)
-            .then((_) {
-              if (!_disposed) _preloadedIndex = next;
-            })
-            .catchError((_) {});
+      final nextIndex = index + 1;
+      if (nextIndex < _reels.length) {
+        _playerNext.setUrl(_reels[nextIndex].audioUrl).catchError((_) => null);
       }
+      completer.complete();
       return;
     }
 
-    // Load and play on main; preload next. Stop current so we never hear wrong reel.
-    final url = _reels[index].audioUrl;
-    try {
-      if (gen != _generation) return;
-      await _mainPlayer.stop();
-      if (gen != _generation || _disposed) return;
-      await _mainPlayer.setUrl(url);
-      if (gen != _generation || _disposed) return;
+    // Swipe backward: prev becomes current, current becomes next, next becomes prev (load new).
+    if (index == _currentReelIndex - 1) {
+      _audioCache?.prefetchAround(index, _reels);
       _currentReelIndex = index;
-      _preloadedIndex = -1;
       state.value = state.value.copyWith(currentIndex: index);
       _lastPosition = Duration.zero;
       _lastDuration = null;
       _emitPositionDuration();
-      await _mainPlayer.play();
-      if (gen != _generation || _disposed) return;
+      _unsubscribe();
+      await _playerCurrent.stop();
+      if (gen != _generation || _disposed) {
+        completer.complete();
+        return;
+      }
+      _rotateBackward();
+      _subscribeTo(_playerCurrent);
+      try {
+        await _playerCurrent.seek(Duration.zero);
+        if (gen != _generation || _disposed) {
+          completer.complete();
+          return;
+        }
+        await _playerCurrent.play();
+        if (gen != _generation || _disposed) {
+          completer.complete();
+          return;
+        }
+        state.value = state.value.copyWith(isPlaying: true);
+      } catch (e) {
+        if (_isIgnorableAudioException(e)) {
+          completer.complete();
+          return;
+        }
+        if (gen == _generation) _onError?.call(e);
+      }
+      final prevIndex = index - 1;
+      if (prevIndex >= 0) {
+        _playerPrev.setUrl(_reels[prevIndex].audioUrl).catchError((_) => null);
+      }
+      completer.complete();
+      return;
+    }
+
+    // Cold jump: load into current, preload prev and next. Use URL for instant start.
+    _audioCache?.prefetchAround(index, _reels);
+    try {
+      if (gen != _generation) {
+        completer.complete();
+        return;
+      }
+      await _playerCurrent.stop();
+      if (gen != _generation || _disposed) {
+        completer.complete();
+        return;
+      }
+      final url = _reels[index].audioUrl;
+      if (url.isEmpty || gen != _generation || _disposed) {
+        completer.complete();
+        return;
+      }
+      await _playerCurrent.setUrl(url);
+      if (gen != _generation || _disposed) {
+        completer.complete();
+        return;
+      }
+      _currentReelIndex = index;
+      state.value = state.value.copyWith(currentIndex: index);
+      _lastPosition = Duration.zero;
+      _lastDuration = null;
+      _emitPositionDuration();
+      await _playerCurrent.play();
+      if (gen != _generation || _disposed) {
+        completer.complete();
+        return;
+      }
       state.value = state.value.copyWith(isPlaying: true);
-      final next = index + 1;
-      if (next < _reels.length) {
-        _preloadPlayer
-            .setUrl(_reels[next].audioUrl)
-            .then((_) {
-              if (!_disposed) _preloadedIndex = next;
-            })
-            .catchError((_) {});
+
+      final prevIndex = index - 1;
+      if (prevIndex >= 0) {
+        _playerPrev.setUrl(_reels[prevIndex].audioUrl).catchError((_) => null);
+      }
+      final nextIndex = index + 1;
+      if (nextIndex < _reels.length) {
+        _playerNext.setUrl(_reels[nextIndex].audioUrl).catchError((_) => null);
       }
     } catch (e) {
-      if (_isIgnorableAudioException(e)) return;
+      if (_isIgnorableAudioException(e)) {
+        completer.complete();
+        return;
+      }
       if (gen == _generation) _onError?.call(e);
     }
+    completer.complete();
+  }
+
+  void _rotateForward() {
+    final newSlotPrev = _slotCurrent;
+    final newSlotCurrent = _slotNext;
+    final newSlotNext = _slotPrev;
+    _slotPrev = newSlotPrev;
+    _slotCurrent = newSlotCurrent;
+    _slotNext = newSlotNext;
+  }
+
+  void _rotateBackward() {
+    final newSlotPrev = _slotNext;
+    final newSlotCurrent = _slotPrev;
+    final newSlotNext = _slotCurrent;
+    _slotPrev = newSlotPrev;
+    _slotCurrent = newSlotCurrent;
+    _slotNext = newSlotNext;
   }
 
   Future<void> _resume(int gen) async {
     try {
-      await _mainPlayer.play();
+      await _playerCurrent.play();
       if (gen == _generation && !_disposed) {
         state.value = state.value.copyWith(isPlaying: true);
       }
@@ -213,19 +349,18 @@ class ReelsAudioController {
     if (_disposed) return;
     _wasPlayingBeforeAppPause = state.value.isPlaying;
     try {
-      await _mainPlayer.pause();
+      await _playerCurrent.pause();
     } catch (e) {
       if (_isIgnorableAudioException(e)) return;
     }
     state.value = state.value.copyWith(isPlaying: false);
   }
 
-  /// Call when app goes to background so we resume playback when app returns.
   Future<void> pauseForAppBackground() async {
     if (_disposed) return;
     if (_currentReelIndex >= 0) _wasPlayingBeforeAppPause = true;
     try {
-      await _mainPlayer.pause();
+      await _playerCurrent.pause();
     } catch (e) {
       if (_isIgnorableAudioException(e)) return;
     }
@@ -233,10 +368,9 @@ class ReelsAudioController {
   }
 
   Future<void> resume() async {
-    if (_disposed || _currentReelIndex < 0 || !_wasPlayingBeforeAppPause)
-      return;
+    if (_disposed || _currentReelIndex < 0 || !_wasPlayingBeforeAppPause) return;
     try {
-      await _mainPlayer.play();
+      await _playerCurrent.play();
     } catch (e) {
       if (_isIgnorableAudioException(e)) return;
     }
@@ -246,11 +380,11 @@ class ReelsAudioController {
   Future<void> togglePlayPause() async {
     if (_disposed || _currentReelIndex < 0) return;
     if (state.value.isPlaying) {
-      await _mainPlayer.pause();
+      await _playerCurrent.pause();
       state.value = state.value.copyWith(isPlaying: false);
     } else {
       try {
-        await _mainPlayer.play();
+        await _playerCurrent.play();
         state.value = state.value.copyWith(isPlaying: true);
       } catch (e) {
         if (!_isIgnorableAudioException(e)) _onError?.call(e);
@@ -270,6 +404,10 @@ class ReelsAudioController {
 
   void _subscribeTo(AudioPlayer player) {
     _unsubscribe();
+    _lastPosition = player.position;
+    _lastDuration = player.duration;
+    _emitPositionDuration();
+
     _playerSub = player.playerStateStream.listen((s) {
       if (_disposed) return;
       state.value = state.value.copyWith(isPlaying: s.playing);
@@ -280,26 +418,33 @@ class ReelsAudioController {
       }
     });
     _positionSub = player.positionStream.listen((p) {
+      if (_disposed) return;
       _lastPosition = p;
       _emitPositionDuration();
     });
     _durationSub = player.durationStream.listen((d) {
+      if (_disposed) return;
       _lastDuration = d;
       _emitPositionDuration();
     });
   }
 
   void attach() {
-    _playerA.setLoopMode(LoopMode.one);
-    _playerB.setLoopMode(LoopMode.one);
-    _subscribeTo(_mainPlayer);
+    for (final p in _players) {
+      p.setLoopMode(LoopMode.one);
+    }
+    _subscribeTo(_playerCurrent);
   }
 
   void _startProgressTimer() {
     _stopProgressTimer();
     _progressTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (_disposed || !_mainPlayer.playing) return;
-      _lastPosition = _mainPlayer.position;
+      if (_disposed || !_playerCurrent.playing) return;
+      _lastPosition = _playerCurrent.position;
+      if (_lastDuration == null) {
+        final d = _playerCurrent.duration;
+        if (d != null) _lastDuration = d;
+      }
       _emitPositionDuration();
     });
   }
@@ -314,7 +459,8 @@ class ReelsAudioController {
     _disposed = true;
     _generation++;
     _unsubscribe();
-    _playerA.dispose();
-    _playerB.dispose();
+    for (final p in _players) {
+      p.dispose();
+    }
   }
 }

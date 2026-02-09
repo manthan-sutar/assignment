@@ -71,20 +71,44 @@ export class CallOfferService {
     };
     this.offerStore.set(offer);
 
+    if (!callee.fcmToken) {
+      console.warn(
+        `[CallOfferService] Callee ${callee.id} (firebaseUid=${offer.calleeId}) has no FCM token; incoming call will not be delivered via push.`,
+      );
+    }
     if (callee.fcmToken) {
-      // Data-only so Flutter background handler runs and shows call-style UI (full-screen/CallKit)
-      await this.firebaseService.sendToToken(
-        callee.fcmToken,
-        {
+      try {
+        // Data-only (no notification payload) so the app's FCM background handler
+        // is invoked when app is in background/killed; then we show CallKit/full-screen.
+        console.log(
+          `[CallOfferService] Sending incoming_call FCM to callee ${callee.id} token=${callee.fcmToken?.slice?.(0, 10) ?? 'null'}... callId=${callId}`,
+        );
+        await this.firebaseService.sendToToken(callee.fcmToken, {
           type: 'incoming_call',
           callId,
           channelName,
           callerId: callerFirebaseUid,
           callerName: offer.callerName,
-        },
-        undefined, // no notification payload -> call-style UI in app
-      );
+        });
+        console.log(
+          `[CallOfferService] FCM incoming_call sent successfully for callId=${callId}`,
+        );
+      } catch (err: unknown) {
+        const code =
+          (err as { code?: string })?.code ??
+          (err as { errorInfo?: { code?: string } })?.errorInfo?.code;
+        if (code?.includes('registration-token-not-registered')) {
+          callee.fcmToken = null;
+          await this.userRepository.save(callee);
+          console.warn(
+            `[CallOfferService] Cleared stale FCM token for callee ${callee.id}; next token upload will fix push.`,
+          );
+        }
+      }
     }
+    console.log(
+      `[CallOfferService] Emitting incoming_call over WebSocket to firebaseUid=${offer.calleeId} callId=${callId}`,
+    );
     this.signalingGateway.emitToUser(offer.calleeId, 'incoming_call', {
       callId,
       channelName,
@@ -123,15 +147,25 @@ export class CallOfferService {
       where: { firebaseUid: offer.callerId },
     });
     if (caller?.fcmToken) {
-      await this.firebaseService.sendToToken(
-        caller.fcmToken,
-        {
-          type: 'call_accepted',
-          callId,
-          channelName: offer.channelName,
-        },
-        { title: 'Call accepted', body: `${offer.calleeName} accepted your call` },
-      );
+      try {
+        await this.firebaseService.sendToToken(
+          caller.fcmToken,
+          {
+            type: 'call_accepted',
+            callId,
+            channelName: offer.channelName,
+          },
+          { title: 'Call accepted', body: `${offer.calleeName} accepted your call` },
+        );
+      } catch (err: unknown) {
+        const code =
+          (err as { code?: string })?.code ??
+          (err as { errorInfo?: { code?: string } })?.errorInfo?.code;
+        if (code?.includes('registration-token-not-registered') && caller) {
+          caller.fcmToken = null;
+          await this.userRepository.save(caller);
+        }
+      }
     }
     this.signalingGateway.emitToUser(offer.callerId, 'call_accepted', {
       callId,
@@ -174,11 +208,21 @@ export class CallOfferService {
       where: { firebaseUid: offer.callerId },
     });
     if (caller?.fcmToken) {
-      await this.firebaseService.sendToToken(
-        caller.fcmToken,
-        { type: 'call_declined', callId },
-        { title: 'Call declined', body: `${offer.calleeName} declined your call` },
-      );
+      try {
+        await this.firebaseService.sendToToken(
+          caller.fcmToken,
+          { type: 'call_declined', callId },
+          { title: 'Call declined', body: `${offer.calleeName} declined your call` },
+        );
+      } catch (err: unknown) {
+        const code =
+          (err as { code?: string })?.code ??
+          (err as { errorInfo?: { code?: string } })?.errorInfo?.code;
+        if (code?.includes('registration-token-not-registered') && caller) {
+          caller.fcmToken = null;
+          await this.userRepository.save(caller);
+        }
+      }
     }
     this.signalingGateway.emitToUser(offer.callerId, 'call_declined', { callId });
   }
@@ -203,11 +247,21 @@ export class CallOfferService {
       where: { firebaseUid: offer.calleeId },
     });
     if (callee?.fcmToken) {
-      await this.firebaseService.sendToToken(
-        callee.fcmToken,
-        { type: 'call_cancelled', callId },
-        { title: 'Call cancelled', body: `${offer.callerName} cancelled the call` },
-      );
+      try {
+        await this.firebaseService.sendToToken(
+          callee.fcmToken,
+          { type: 'call_cancelled', callId },
+          { title: 'Call cancelled', body: `${offer.callerName} cancelled the call` },
+        );
+      } catch (err: unknown) {
+        const code =
+          (err as { code?: string })?.code ??
+          (err as { errorInfo?: { code?: string } })?.errorInfo?.code;
+        if (code?.includes('registration-token-not-registered') && callee) {
+          callee.fcmToken = null;
+          await this.userRepository.save(callee);
+        }
+      }
     }
     this.signalingGateway.emitToUser(offer.calleeId, 'call_cancelled', { callId });
   }

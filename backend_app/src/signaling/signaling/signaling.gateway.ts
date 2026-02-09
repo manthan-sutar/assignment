@@ -74,10 +74,15 @@ export class SignalingGateway
    */
   emitToUser(userId: string, event: string, data: Record<string, unknown>): void {
     const socketIds = this.socketIdsByUserId.get(userId);
-    if (socketIds) {
+    if (socketIds && socketIds.size > 0) {
       for (const id of socketIds) {
         this.server.to(id).emit(event, data);
       }
+    } else {
+      console.warn(
+        `[SignalingGateway] emitToUser: no socket for userId=${userId} (event=${event}). ` +
+          'Callee may not be connected or not yet registered.',
+      );
     }
   }
 

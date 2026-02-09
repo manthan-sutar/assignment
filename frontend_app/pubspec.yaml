@@ -51,6 +51,7 @@ dependencies:
   # Reels: audio playback and image caching
   just_audio: ^0.9.40
   cached_network_image: ^3.4.1
+  path_provider: ^2.1.5
 
   # Agora: voice/video calling and live audio streaming
   agora_rtc_engine: ^6.5.3

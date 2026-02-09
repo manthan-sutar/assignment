@@ -11,6 +11,7 @@ class LiveHubBloc extends Bloc<LiveHubEvent, LiveHubState> {
       super(const LiveHubInitial()) {
     on<LiveHubLoadSessions>(_onLoadSessions);
     on<LiveHubGoLive>(_onGoLive);
+    on<LiveHubReenterHost>(_onReenterHost);
     on<LiveHubEndMyLive>(_onEndMyLive);
     on<LiveHubSessionStarted>(_onSessionStarted);
     on<LiveHubSessionEnded>(_onSessionEnded);
@@ -54,6 +55,31 @@ class LiveHubBloc extends Bloc<LiveHubEvent, LiveHubState> {
           .replaceFirst(RegExp(r'^(Exception|CallException):\s*'), '')
           .trim();
       emit(LiveHubError(msg.isEmpty ? 'Failed to start live' : msg));
+    }
+  }
+
+  Future<void> _onReenterHost(
+    LiveHubReenterHost event,
+    Emitter<LiveHubState> emit,
+  ) async {
+    final current = state;
+    if (current is LiveHubLoaded && current.endingLive) return;
+    emit(const LiveHubLoading());
+    try {
+      final startData = await _repo.getHostToken();
+      if (startData != null) {
+        emit(LiveHubStartSuccess(startData));
+      } else {
+        emit(const LiveHubError('Stream ended or not found'));
+        add(const LiveHubLoadSessions());
+      }
+    } catch (e) {
+      final msg = e
+          .toString()
+          .replaceFirst(RegExp(r'^(Exception|CallException):\s*'), '')
+          .trim();
+      emit(LiveHubError(msg.isEmpty ? 'Could not re-enter stream' : msg));
+      add(const LiveHubLoadSessions());
     }
   }
 

@@ -59,6 +59,29 @@ class LiveRemoteDataSource {
     }
   }
 
+  Future<StartLiveEntity?> getHostToken(String idToken) async {
+    if (idToken.isEmpty) return null;
+    try {
+      final response = await _client.get<Map<String, dynamic>>(
+        AppConfig.liveHostTokenEndpoint,
+        headers: {'Authorization': 'Bearer $idToken'},
+      );
+      final map = response.data;
+      if (map == null) return null;
+      return StartLiveEntity(
+        sessionId: map['sessionId'] as String,
+        channelName: map['channelName'] as String,
+        token: map['token'] as String,
+        appId: map['appId'] as String,
+        uid: (map['uid'] as num).toInt(),
+        expiresIn: (map['expiresIn'] as num).toInt(),
+      );
+    } on DioException catch (e) {
+      if (DioClient.getStatusCode(e) == 404) return null;
+      rethrow;
+    }
+  }
+
   Future<List<LiveSessionEntity>> getSessions(String idToken) async {
     if (idToken.isEmpty) throw _unauthorized();
     try {

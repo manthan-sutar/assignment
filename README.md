@@ -6,22 +6,22 @@ A cross-platform Flutter app with a NestJS backend providing **audio reels** (ve
 
 ## Features
 
-| Feature | Description |
-|--------|-------------|
-| **Reels** | Vertical full-screen audio feed; auto-play on scroll, dual-player preload for instant transitions, app lifecycle handling (pause/resume). |
+| Feature   | Description                                                                                                                                                |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reels** | Vertical full-screen audio feed; auto-play on scroll, dual-player preload for instant transitions, app lifecycle handling (pause/resume).                  |
 | **Calls** | Create offer → callee notified via WebSocket (foreground) or FCM (background/killed); Accept/Decline with CallKit-style UI; join Agora channel with token. |
-| **Live** | Host goes live (Agora publisher); real-time "Live now" list via WebSocket; listeners join as subscribers. |
-| **Auth** | Phone OTP (Firebase), sign-up, profile (display name + photo), FCM token upload, list users for calling. |
+| **Live**  | Host goes live (Agora publisher); real-time "Live now" list via WebSocket; listeners join as subscribers.                                                  |
+| **Auth**  | Phone OTP (Firebase), sign-up, profile (display name + photo), FCM token upload, list users for calling.                                                   |
 
 ---
 
 ## Tech Stack
 
-| Layer | Technologies |
-|-------|-------------|
+| Layer        | Technologies                                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | **Frontend** | Flutter 3.x, Dart, `flutter_bloc`, Firebase (Auth, FCM), Agora RTC, Socket.IO client, `just_audio`, `flutter_callkit_incoming` |
-| **Backend** | NestJS, TypeORM, PostgreSQL, Socket.IO, Firebase Admin, Agora token server |
-| **Infra** | Firebase (Auth, optional Storage), Agora (calls & live) |
+| **Backend**  | NestJS, TypeORM, PostgreSQL, Socket.IO, Firebase Admin, Agora token server                                                     |
+| **Infra**    | Firebase (Auth, optional Storage), Agora (calls & live)                                                                        |
 
 ---
 
@@ -135,11 +135,11 @@ flutter run
 
 ## Documentation
 
-| Doc | Purpose |
-|-----|--------|
-| [backend_app/README.md](backend_app/README.md) | NestJS setup and scripts |
-| [backend_app/ENV_SETUP.md](backend_app/ENV_SETUP.md) | Environment variables |
-| [frontend_app/IOS_TEST_CHECKLIST.md](frontend_app/IOS_TEST_CHECKLIST.md) | iOS testing notes |
+| Doc                                                                      | Purpose                  |
+| ------------------------------------------------------------------------ | ------------------------ |
+| [backend_app/README.md](backend_app/README.md)                           | NestJS setup and scripts |
+| [backend_app/ENV_SETUP.md](backend_app/ENV_SETUP.md)                     | Environment variables    |
+| [frontend_app/IOS_TEST_CHECKLIST.md](frontend_app/IOS_TEST_CHECKLIST.md) | iOS testing notes        |
 
 ---
 

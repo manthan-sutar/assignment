@@ -21,6 +21,13 @@ class LiveRepositoryImpl implements LiveRepository {
   }
 
   @override
+  Future<StartLiveEntity?> getHostToken() async {
+    final idToken = await _getIdToken();
+    if (idToken == null || idToken.isEmpty) return null;
+    return _remote.getHostToken(idToken);
+  }
+
+  @override
   Future<void> endLive() async {
     final idToken = await _getIdToken();
     if (idToken == null || idToken.isEmpty) throw Exception('Unauthorized');

@@ -80,6 +80,7 @@ export class FirebaseService implements OnModuleInit {
 
   /**
    * Send FCM message to a device token (data + optional notification for when app is in background/killed).
+   * When notification is provided, APNS payload includes alert and sound so iOS shows a visible, audible notification.
    */
   async sendToToken(
     token: string,
@@ -88,8 +89,55 @@ export class FirebaseService implements OnModuleInit {
   ): Promise<void> {
     if (!token?.trim()) return;
     const messaging = admin.messaging(this.firebaseApp);
+    const aps: admin.messaging.Aps = {
+      contentAvailable: true,
+      ...(notification && {
+        alert: { title: notification.title, body: notification.body },
+        sound: 'default',
+      }),
+    };
     const message: admin.messaging.Message = {
       token,
+      data,
+      notification: notification
+        ? { title: notification.title, body: notification.body }
+        : undefined,
+      android: { priority: 'high' as const },
+      apns: { payload: { aps }, fcmOptions: {} },
+    };
+    try {
+      await messaging.send(message);
+    } catch (err: unknown) {
+      const code =
+        (err as { code?: string })?.code ??
+        (err as { errorInfo?: { code?: string } })?.errorInfo?.code;
+      const isTokenInvalid =
+        typeof code === 'string' && code.includes('registration-token-not-registered');
+      if (isTokenInvalid) {
+        console.warn(
+          'FCM send: token not registered (stale/invalid); caller should clear stored token.',
+          code,
+        );
+      } else {
+        console.error('FCM send failed:', err);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Send FCM message to a topic (e.g. "live_sessions"). All subscribers receive it.
+   * Use for notifying all app users when someone goes live.
+   */
+  async sendToTopic(
+    topic: string,
+    data: Record<string, string>,
+    notification?: { title: string; body: string },
+  ): Promise<void> {
+    if (!topic?.trim()) return;
+    const messaging = admin.messaging(this.firebaseApp);
+    const message: admin.messaging.Message = {
+      topic: topic.trim(),
       data,
       notification: notification
         ? { title: notification.title, body: notification.body }
@@ -100,7 +148,7 @@ export class FirebaseService implements OnModuleInit {
     try {
       await messaging.send(message);
     } catch (err) {
-      console.error('FCM send failed:', err);
+      console.error('FCM sendToTopic failed:', err);
     }
   }
 

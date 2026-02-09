@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -32,91 +33,109 @@ import 'features/reels/data/datasources/reels_remote_datasource.dart';
 import 'features/reels/data/repositories/reels_repository_impl.dart';
 import 'features/reels/presentation/bloc/reels_bloc.dart';
 import 'features/live/presentation/bloc/live_hub/live_hub_bloc.dart';
+import 'features/live/presentation/pages/live_hub_page.dart';
 
 /// Top-level FCM background handler (required for background/terminated messages).
 /// Shows call-style full-screen UI (CallKit on iOS, full-screen on Android) for incoming calls.
+/// Must be data-only FCM (no notification payload) for this to run when app is in background.
+@pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  debugPrint(
+    'BG handler invoked: from=${message.from} data=${message.data} notification=${message.notification}',
+  );
   await FirebaseConfig.initialize();
   final data = message.data;
-  if (data['type'] == 'incoming_call') {
-    try {
-      await CallKitIncomingService.showIncomingCall(data);
-    } catch (e) {
-      debugPrint('CallKit showIncomingCall error: $e');
-    }
+  final type = data['type'];
+  if (type != 'incoming_call') {
+    debugPrint('BG handler: ignoring message with type=$type');
+    return;
+  }
+  try {
+    debugPrint(
+      'BG handler: processing incoming_call callId=${data['callId']} callerName=${data['callerName']}',
+    );
+    await CallKitIncomingService.showIncomingCall(data);
+    debugPrint('BG handler: CallKitIncomingService.showIncomingCall completed');
+  } catch (e, st) {
+    debugPrint('BG handler: CallKit showIncomingCall error: $e');
+    debugPrint('$st');
   }
 }
 
 /**
  * Main Entry Point
  * Initializes Firebase, sets up dependency injection, and starts the app.
- * All of this runs in the same zone so Flutter bindings and runApp stay consistent.
+ * Kept in the root zone so Flutter's runApp() assertions are satisfied.
  */
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-  runZonedGuarded(
-    () async {
-      // Initialize Firebase
-      bool firebaseInitialized = false;
-      try {
-        await FirebaseConfig.initialize();
-        firebaseInitialized = FirebaseConfig.isInitialized;
-      } catch (e) {
-        debugPrint('Firebase initialization error: $e');
-        firebaseInitialized = false;
+  // Global error handling hooks (optional, non-fatal filtering).
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+  };
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    if (error is PlatformException) {
+      final code = error.code.toLowerCase();
+      final msg = (error.message ?? '').toLowerCase();
+      if (code == 'abort' || msg.contains('loading interrupted')) {
+        return true; // handled
       }
-
-      // Initialize SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-
-      final authLocalDataSource = AuthLocalDataSource(prefs);
-      _authRepository = _createAuthRepository(
-        prefs,
-        firebaseInitialized,
-        authLocalDataSource,
-      );
-      _reelsRepository = _createReelsRepository(authLocalDataSource);
-      _callRepository = CallRepositoryImpl(
-        remoteDataSource: CallRemoteDataSource(),
-        getIdToken: () => _authRepository!.getCurrentIdToken(),
-      );
-      _liveRepository = LiveRepositoryImpl(
-        getIdToken: () => _authRepository!.getCurrentIdToken(),
-      );
-
-      FcmService? fcmService;
-      SignalingService? signalingService;
-      if (firebaseInitialized) {
-        fcmService = FcmService(authRepository: _authRepository!);
-        await fcmService.initialize();
-        signalingService = SignalingService(authRepository: _authRepository!);
+      if (msg.contains('already exists') || code.contains('already exists')) {
+        return true; // handled
       }
+    }
+    return false; // let Flutter handle
+  };
 
-      final navigatorKey = GlobalKey<NavigatorState>();
-      CallKitIncomingService.setNavigatorKey(navigatorKey);
-      CallKitIncomingService.listenToCallEvents();
+  // Initialize Firebase
+  bool firebaseInitialized = false;
+  try {
+    await FirebaseConfig.initialize();
+    firebaseInitialized = FirebaseConfig.isInitialized;
+  } catch (e) {
+    debugPrint('Firebase initialization error: $e');
+    firebaseInitialized = false;
+  }
 
-      runApp(
-        MyApp(
-          firebaseInitialized: firebaseInitialized,
-          fcmService: fcmService,
-          signalingService: signalingService,
-          navigatorKey: navigatorKey,
-        ),
-      );
-    },
-    (error, stack) {
-      if (error is PlatformException) {
-        final code = error.code.toLowerCase();
-        final msg = (error.message ?? '').toLowerCase();
-        if (code == 'abort' || msg.contains('loading interrupted')) return;
-        if (msg.contains('already exists') || code.contains('already exists'))
-          return;
-      }
-      throw error;
-    },
+  // Initialize SharedPreferences
+  final prefs = await SharedPreferences.getInstance();
+
+  final authLocalDataSource = AuthLocalDataSource(prefs);
+  _authRepository = _createAuthRepository(
+    prefs,
+    firebaseInitialized,
+    authLocalDataSource,
+  );
+  _reelsRepository = _createReelsRepository();
+  _callRepository = CallRepositoryImpl(
+    remoteDataSource: CallRemoteDataSource(),
+    getIdToken: () => _authRepository!.getCurrentIdToken(),
+  );
+  _liveRepository = LiveRepositoryImpl(
+    getIdToken: () => _authRepository!.getCurrentIdToken(),
+  );
+
+  FcmService? fcmService;
+  SignalingService? signalingService;
+  if (firebaseInitialized) {
+    fcmService = FcmService(authRepository: _authRepository!);
+    await fcmService.initialize();
+    signalingService = SignalingService(authRepository: _authRepository!);
+  }
+
+  final navigatorKey = GlobalKey<NavigatorState>();
+  CallKitIncomingService.setNavigatorKey(navigatorKey);
+  CallKitIncomingService.listenToCallEvents();
+
+  runApp(
+    MyApp(
+      firebaseInitialized: firebaseInitialized,
+      fcmService: fcmService,
+      signalingService: signalingService,
+      navigatorKey: navigatorKey,
+    ),
   );
 }
 
@@ -155,15 +174,10 @@ AuthRepository _createAuthRepository(
 }
 
 /**
- * Create Reels Repository (depends on auth local for API token)
+ * Create Reels Repository (uses reels feed API with cursor + limit)
  */
-ReelsRepository _createReelsRepository(
-  AuthLocalDataSource authLocalDataSource,
-) {
-  return ReelsRepositoryImpl(
-    remoteDataSource: ReelsRemoteDataSource(),
-    authLocalDataSource: authLocalDataSource,
-  );
+ReelsRepository _createReelsRepository() {
+  return ReelsRepositoryImpl(remoteDataSource: ReelsRemoteDataSource());
 }
 
 class MyApp extends StatelessWidget {
@@ -220,8 +234,7 @@ class MyApp extends StatelessWidget {
             ? BlocListener<AuthBloc, AuthState>(
                 listener: (context, state) {
                   if (state is AuthAuthenticated) {
-                    fcmService?.uploadTokenToBackend();
-                    signalingService?.connect();
+                    fcmService?.subscribeToLiveTopic();
                   }
                 },
                 child: BlocBuilder<AuthBloc, AuthState>(
@@ -230,10 +243,14 @@ class MyApp extends StatelessWidget {
                       final needsOnboarding =
                           state.user.displayName == null ||
                           state.user.displayName!.trim().isEmpty;
-                      return _IncomingCallListener(
-                        child: needsOnboarding
-                            ? const OnboardingPage()
-                            : const DashboardPage(),
+                      return _ConnectionReadyGate(
+                        navigatorKey: navigatorKey,
+                        child: _IncomingCallListener(
+                          navigatorKey: navigatorKey,
+                          child: needsOnboarding
+                              ? const OnboardingPage()
+                              : const DashboardPage(),
+                        ),
                       );
                     }
                     // No full-screen loader: show sign-in immediately.
@@ -273,10 +290,131 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// Waits for FCM token upload and signaling connection before showing [child].
+/// Fixes first-login: callee is ready to receive calls before dashboard is shown.
+class _ConnectionReadyGate extends StatefulWidget {
+  const _ConnectionReadyGate({required this.navigatorKey, required this.child});
+
+  final GlobalKey<NavigatorState>? navigatorKey;
+  final Widget child;
+
+  @override
+  State<_ConnectionReadyGate> createState() => _ConnectionReadyGateState();
+}
+
+class _ConnectionReadyGateState extends State<_ConnectionReadyGate>
+    with WidgetsBindingObserver {
+  bool _ready = false;
+  bool _started = false;
+
+  static const int _fcmUploadMaxAttempts = 3;
+  static const Duration _retryDelay = Duration(seconds: 2);
+
+  Future<void> _ensureReady() async {
+    // Brief delay so auth/FCM are ready after first sign-in (avoids first-install race).
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted) return;
+    // Retry FCM token upload so server has token for incoming push.
+    final fcm = context.read<FcmService>();
+    for (var attempt = 1; attempt <= _fcmUploadMaxAttempts; attempt++) {
+      if (!mounted) return;
+      try {
+        await fcm.uploadTokenToBackend();
+        break;
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint(
+            'ConnectionReadyGate: FCM upload attempt $attempt/$_fcmUploadMaxAttempts failed: $e',
+          );
+        }
+        if (attempt < _fcmUploadMaxAttempts) {
+          await Future<void>.delayed(_retryDelay);
+        }
+      }
+    }
+    if (!mounted) return;
+    // Connect signaling (with retry once on timeout) so WebSocket can deliver incoming_call.
+    final signaling = context.read<SignalingService>();
+    for (var attempt = 1; attempt <= 2; attempt++) {
+      if (!mounted) return;
+      try {
+        await signaling.connect();
+        break;
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint(
+            'ConnectionReadyGate: signaling connect attempt $attempt/2 failed: $e',
+          );
+        }
+        if (attempt < 2) await Future<void>.delayed(_retryDelay);
+      }
+    }
+    if (mounted) setState(() => _ready = true);
+  }
+
+  void _onAppResumed() {
+    if (!_ready || !mounted) return;
+    // Re-upload FCM token and reconnect signaling when app comes to foreground
+    // so we recover from failed first attempt or stale connection.
+    final fcm = context.read<FcmService>();
+    fcm.uploadTokenToBackend();
+    final signaling = context.read<SignalingService>();
+    if (!signaling.isConnected) signaling.connect();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _onAppResumed();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    _ensureReady();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) {
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Preparing…'),
+            ],
+          ),
+        ),
+      );
+    }
+    return widget.child;
+  }
+}
+
 /// Listens to WebSocket and FCM for incoming_call and pushes [IncomingCallPage].
 class _IncomingCallListener extends StatefulWidget {
-  const _IncomingCallListener({required this.child});
+  const _IncomingCallListener({
+    required this.navigatorKey,
+    required this.child,
+  });
 
+  final GlobalKey<NavigatorState>? navigatorKey;
   final Widget child;
 
   @override
@@ -286,88 +424,142 @@ class _IncomingCallListener extends StatefulWidget {
 class _IncomingCallListenerState extends State<_IncomingCallListener> {
   StreamSubscription<IncomingCallPayload>? _wsSub;
   StreamSubscription<RemoteMessage>? _fcmSub;
+  StreamSubscription<RemoteMessage>? _fcmOpenedSub;
+
+  void _navigateToLiveHub() {
+    if (!mounted) return;
+    final nav = widget.navigatorKey?.currentState;
+    if (nav == null) return;
+    try {
+      final liveHubBloc = context.read<LiveHubBloc>();
+      nav.push(
+        MaterialPageRoute<void>(
+          builder: (_) => BlocProvider<LiveHubBloc>.value(
+            value: liveHubBloc,
+            child: const LiveHubPage(),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (kDebugMode)
+        debugPrint('IncomingCallListener: could not navigate to live hub: $e');
+    }
+  }
+
+  void _pushIncomingCallPage({
+    required String callId,
+    required String callerName,
+    String? channelName,
+    String? callerId,
+  }) {
+    if (!mounted) return;
+    if (!IncomingCallDeduplication.shouldShow(callId)) return;
+    if (IncomingCallDeduplication.isIncomingCallUIVisible) return;
+    final nav = widget.navigatorKey?.currentState ?? Navigator.of(context);
+    IncomingCallDeduplication.setIncomingCallUIVisible(true);
+    nav
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) => IncomingCallPage(
+              callId: callId,
+              callerName: callerName,
+              channelName: channelName,
+              callerId: callerId,
+            ),
+          ),
+        )
+        .then((_) {
+          IncomingCallDeduplication.setIncomingCallUIVisible(false);
+          IncomingCallDeduplication.onIncomingCallDismissed(callId);
+        });
+  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_wsSub != null) return;
-    // First mount (or after hot restart): reset so hot reload doesn't leave flag stuck
     IncomingCallDeduplication.setIncomingCallUIVisible(false);
+    // WebSocket: subscribe so in-app incoming call shows when app is in foreground
     try {
       final signaling = context.read<SignalingService>();
       _wsSub = signaling.incomingCall.listen((payload) {
         if (!mounted) return;
-        if (!IncomingCallDeduplication.shouldShow(payload.callId)) return;
-        if (IncomingCallDeduplication.isIncomingCallUIVisible) return;
-        IncomingCallDeduplication.setIncomingCallUIVisible(true);
-        Navigator.of(context)
-            .push(
-              MaterialPageRoute<void>(
-                builder: (_) => IncomingCallPage(
-                  callId: payload.callId,
-                  callerName: payload.callerName,
-                  channelName: payload.channelName,
-                  callerId: payload.callerId,
-                ),
-              ),
-            )
-            .then((_) {
-              IncomingCallDeduplication.setIncomingCallUIVisible(false);
-            });
+        _pushIncomingCallPage(
+          callId: payload.callId,
+          callerName: payload.callerName,
+          channelName: payload.channelName,
+          callerId: payload.callerId,
+        );
       });
-    } catch (_) {}
+    } catch (e, st) {
+      debugPrint('IncomingCallListener: SignalingService not available: $e');
+      if (kDebugMode) debugPrint('$st');
+    }
+    // FCM foreground: same for data messages when app is open
     try {
       final fcm = context.read<FcmService>();
       _fcmSub = fcm.foregroundMessages.listen((message) {
         final data = message.data;
-        if (data['type'] != 'incoming_call') return;
         if (!mounted) return;
+        if (data['type'] == 'live_started') {
+          _navigateToLiveHub();
+          return;
+        }
+        if (data['type'] != 'incoming_call') return;
         final callId = (data['callId'] as String?) ?? '';
-        if (!IncomingCallDeduplication.shouldShow(callId)) return;
-        if (IncomingCallDeduplication.isIncomingCallUIVisible) return;
-        IncomingCallDeduplication.setIncomingCallUIVisible(true);
-        Navigator.of(context)
-            .push(
-              MaterialPageRoute<void>(
-                builder: (_) => IncomingCallPage(
-                  callId: callId,
-                  callerName: (data['callerName'] as String?) ?? 'Unknown',
-                  channelName: data['channelName'] as String?,
-                  callerId: data['callerId'] as String?,
-                ),
-              ),
-            )
-            .then((_) {
-              IncomingCallDeduplication.setIncomingCallUIVisible(false);
-            });
+        final callerName = (data['callerName'] as String?) ?? 'Unknown';
+        final channelName = data['channelName'] as String?;
+        final callerId = data['callerId'] as String?;
+        _pushIncomingCallPage(
+          callId: callId,
+          callerName: callerName,
+          channelName: channelName,
+          callerId: callerId,
+        );
       });
-    } catch (_) {}
+      _fcmOpenedSub = FirebaseMessaging.onMessageOpenedApp.listen((message) {
+        final data = message.data;
+        if (data['type'] == 'live_started' && mounted) _navigateToLiveHub();
+      });
+    } catch (e, st) {
+      debugPrint('IncomingCallListener: FcmService not available: $e');
+      if (kDebugMode) debugPrint('$st');
+    }
     _handleInitialFcmMessage();
   }
 
   /// When app was opened from a notification tap (background/killed), open IncomingCallPage
-  /// only if the offer is still valid (ringing). Avoids false/stale call on restart.
+  /// or LiveHubPage depending on message type.
   Future<void> _handleInitialFcmMessage() async {
     final message = await FirebaseMessaging.instance.getInitialMessage();
     if (message == null || !mounted) return;
     final data = message.data;
+    if (data['type'] == 'live_started') {
+      _navigateToLiveHub();
+      return;
+    }
     if (data['type'] != 'incoming_call') return;
     final callId = data['callId'] as String?;
     if (callId == null || callId.isEmpty) return;
-    if (!IncomingCallDeduplication.shouldShow(callId)) return;
     if (!mounted) return;
-    final nav = Navigator.of(context);
-    final callRepo = context.read<CallRepository>();
+    CallRepository callRepo;
+    try {
+      callRepo = context.read<CallRepository>();
+    } catch (e) {
+      debugPrint('IncomingCallListener: CallRepository not available: $e');
+      return;
+    }
     final callerNameFromPayload = (data['callerName'] as String?) ?? 'Unknown';
     final channelName = data['channelName'] as String?;
     final callerId = data['callerId'] as String?;
     try {
       final offer = await callRepo.getOffer(callId);
       if (!mounted) return;
-      if (offer == null || (offer['status'] as String?) != 'ringing') {
-        return;
-      }
+      // Don't show incoming screen for ended/cancelled calls (stale notification).
+      if (offer == null || (offer['status'] as String?) != 'ringing') return;
+      if (!IncomingCallDeduplication.shouldShow(callId)) return;
       if (IncomingCallDeduplication.isIncomingCallUIVisible) return;
+      final nav = widget.navigatorKey?.currentState ?? Navigator.of(context);
       IncomingCallDeduplication.setIncomingCallUIVisible(true);
       nav
           .push(
@@ -383,14 +575,19 @@ class _IncomingCallListenerState extends State<_IncomingCallListener> {
           )
           .then((_) {
             IncomingCallDeduplication.setIncomingCallUIVisible(false);
+            IncomingCallDeduplication.onIncomingCallDismissed(callId);
           });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('IncomingCallListener: getOffer failed: $e');
+      IncomingCallDeduplication.onIncomingCallDismissed(callId);
+    }
   }
 
   @override
   void dispose() {
     _wsSub?.cancel();
     _fcmSub?.cancel();
+    _fcmOpenedSub?.cancel();
     super.dispose();
   }
 

@@ -31,6 +31,8 @@ class _LiveHubPageState extends State<LiveHubPage> {
     try {
       final signaling = context.read<SignalingService>();
       final bloc = context.read<LiveHubBloc>();
+      // Load sessions when opening this page so everyone sees the same list (same backend).
+      bloc.add(const LiveHubLoadSessions());
       _startedSub = signaling.liveStarted.listen((payload) {
         if (!mounted) return;
         bloc.add(
@@ -69,18 +71,27 @@ class _LiveHubPageState extends State<LiveHubPage> {
         : null;
 
     return BlocListener<LiveHubBloc, LiveHubState>(
-      listenWhen: (prev, state) => state is LiveHubStartSuccess,
+      // Only push when we *transition to* LiveHubStartSuccess (avoids double-push on rebuild).
+      listenWhen: (prev, state) =>
+          state is LiveHubStartSuccess && prev is! LiveHubStartSuccess,
       listener: (context, state) {
         if (state is LiveHubStartSuccess) {
           Navigator.of(context)
-              .push(
-                MaterialPageRoute<void>(
+              .push<String?>(
+                MaterialPageRoute<String?>(
                   builder: (_) => LiveHostPage(startData: state.startData),
                 ),
               )
-              .then((_) {
-                if (mounted)
-                  context.read<LiveHubBloc>().add(const LiveHubLoadSessions());
+              .then((result) {
+                if (!mounted) return;
+                context.read<LiveHubBloc>().add(const LiveHubLoadSessions());
+                final errorMessage = result;
+                if (errorMessage != null && errorMessage.isNotEmpty) {
+                  final messenger = ScaffoldMessenger.maybeOf(context);
+                  messenger?.showSnackBar(
+                    SnackBar(content: Text(errorMessage)),
+                  );
+                }
               });
         }
       },
@@ -145,39 +156,67 @@ class _LiveHubPageState extends State<LiveHubPage> {
                           borderRadius: BorderRadius.circular(12),
                           child: Padding(
                             padding: const EdgeInsets.all(16),
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(
-                                  Icons.mic_rounded,
-                                  color: Colors.orange.shade700,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    "You're live. End your stream to go live again.",
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      color: Colors.orange.shade900,
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.mic_rounded,
+                                      color: Colors.orange.shade700,
                                     ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                FilledButton(
-                                  onPressed: (loading || endingLive)
-                                      ? null
-                                      : () => context.read<LiveHubBloc>().add(
-                                          const LiveHubEndMyLive(),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        "You're live. Re-enter your stream or end it.",
+                                        style: theme.textTheme.bodyMedium?.copyWith(
+                                          color: Colors.orange.shade900,
                                         ),
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: Colors.red.shade600,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 8,
+                                      ),
                                     ),
-                                  ),
-                                  child: Text(
-                                    endingLive ? 'Ending…' : 'End live',
-                                  ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    FilledButton.icon(
+                                      onPressed: (loading || endingLive)
+                                          ? null
+                                          : () => context.read<LiveHubBloc>().add(
+                                                const LiveHubReenterHost(),
+                                              ),
+                                      icon: const Icon(Icons.screen_share, size: 18),
+                                      label: const Text('Back to your stream'),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: colorScheme.primary,
+                                        foregroundColor: colorScheme.onPrimary,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 8,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    FilledButton(
+                                      onPressed: (loading || endingLive)
+                                          ? null
+                                          : () => context.read<LiveHubBloc>().add(
+                                                const LiveHubEndMyLive(),
+                                              ),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: Colors.red.shade600,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 8,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        endingLive ? 'Ending…' : 'End live',
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),

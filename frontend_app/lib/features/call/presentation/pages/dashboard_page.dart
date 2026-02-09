@@ -18,12 +18,37 @@ import '../../../../features/live/presentation/pages/live_hub_page.dart';
 import '../../../../features/live/presentation/pages/live_listener_page.dart';
 import '../../../../features/reels/presentation/pages/reels_feed_page.dart';
 import '../../data/services/signaling_service.dart';
+import '../../data/services/fcm_service.dart';
 import 'user_details_page.dart';
 
 /// Dashboard Page
 /// Entry to Reels, Find people (from API), and app actions after authentication.
-class DashboardPage extends StatelessWidget {
+class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
+
+  @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
+  bool _ensuredConnections = false;
+
+  Future<void> _ensureConnectionsReady() async {
+    if (_ensuredConnections) return;
+    _ensuredConnections = true;
+    // Best-effort: when user first lands on dashboard, double-check that this
+    // device has uploaded its FCM token and is connected to signaling.
+    try {
+      final fcm = context.read<FcmService>();
+      await fcm.uploadTokenToBackend();
+    } catch (_) {}
+    try {
+      final signaling = context.read<SignalingService>();
+      if (!signaling.isConnected) {
+        await signaling.connect();
+      }
+    } catch (_) {}
+  }
 
   void _handleLogout(BuildContext context) {
     // Show confirmation dialog
@@ -73,6 +98,8 @@ class DashboardPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Kick off connection readiness as soon as dashboard builds.
+    scheduleMicrotask(_ensureConnectionsReady);
     return BlocListener<AuthBloc, AuthState>(
       listener: (context, state) {
         if (state is AuthError) {
@@ -240,6 +267,60 @@ class DashboardPage extends StatelessWidget {
   }
 }
 
+/// Avatar that loads profile image with fallback to initial on load error (404, CORS, etc.).
+class _ProfileAvatar extends StatelessWidget {
+  const _ProfileAvatar({
+    required this.radius,
+    this.resolvedPhotoUrl,
+    required this.initial,
+  });
+
+  final double radius;
+  final String? resolvedPhotoUrl;
+  final String initial;
+
+  @override
+  Widget build(BuildContext context) {
+    final diameter = radius * 2;
+    if (resolvedPhotoUrl == null || resolvedPhotoUrl!.isEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: Colors.deepPurple.shade50,
+        child: Text(
+          initial,
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+            color: Colors.deepPurple.shade400,
+          ),
+        ),
+      );
+    }
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: Colors.deepPurple.shade50,
+      child: ClipOval(
+        child: Image.network(
+          resolvedPhotoUrl!,
+          fit: BoxFit.cover,
+          width: diameter,
+          height: diameter,
+          errorBuilder: (_, __, ___) => Center(
+            child: Text(
+              initial,
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                color: Colors.deepPurple.shade400,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Grid cell: card with avatar and name. Tappable to show user details.
 class _UserGridCell extends StatelessWidget {
   const _UserGridCell({required this.displayName, this.photoURL, this.onTap});
@@ -282,23 +363,10 @@ class _UserGridCell extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircleAvatar(
+            _ProfileAvatar(
               radius: 36,
-              backgroundColor: Colors.deepPurple.shade50,
-              foregroundColor: Colors.deepPurple.shade700,
-              backgroundImage: useNetwork
-                  ? NetworkImage(resolvedPhotoUrl)
-                  : null,
-              child: useNetwork
-                  ? null
-                  : Text(
-                      initial,
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.deepPurple.shade400,
-                      ),
-                    ),
+              resolvedPhotoUrl: useNetwork ? resolvedPhotoUrl : null,
+              initial: initial,
             ),
             const SizedBox(height: 12),
             SizedBox(

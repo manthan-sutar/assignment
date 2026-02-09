@@ -91,17 +91,24 @@ class ActiveCallBloc extends Bloc<ActiveCallEvent, ActiveCallState> {
     emit(ActiveCallError(event.message));
   }
 
-  void _onRemoteUsersChanged(
+  Future<void> _onRemoteUsersChanged(
     _ActiveCallRemoteUsersChanged event,
     Emitter<ActiveCallState> emit,
-  ) {
+  ) async {
     final current = state;
-    if (current is ActiveCallConnected) {
-      emit(ActiveCallConnected(
-        muted: current.muted,
-        remoteUserCount: event.count,
-      ));
+    if (current is! ActiveCallConnected) return;
+    // Other party left: had remote user(s), now zero → end call and close screen
+    if (current.remoteUserCount > 0 && event.count == 0) {
+      await _eventSub?.cancel();
+      await _agora.leaveChannel();
+      await _agora.dispose();
+      if (!isClosed) emit(const ActiveCallEnded());
+      return;
     }
+    emit(ActiveCallConnected(
+      muted: current.muted,
+      remoteUserCount: event.count,
+    ));
   }
 
   Future<void> _onEnd(ActiveCallEnd event, Emitter<ActiveCallState> emit) async {

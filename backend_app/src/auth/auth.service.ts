@@ -262,8 +262,8 @@ export class AuthService {
     const filtered = users.filter((u) => u.firebaseUid !== firebaseUid);
     return filtered.map((u) => ({
       id: u.id,
-      displayName: u.displayName,
-      photoURL: u.photoURL,
+      displayName: u.displayName ?? null,
+      photoURL: u.photoURL && u.photoURL.trim() !== '' ? u.photoURL : null,
     }));
   }
 }

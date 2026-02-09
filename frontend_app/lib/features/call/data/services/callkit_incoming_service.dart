@@ -18,11 +18,17 @@ class CallKitIncomingService {
 
   /// Show native call-style incoming screen. Pass [data] from FCM (type, callId, callerName, etc.).
   static Future<void> showIncomingCall(Map<String, dynamic> data) async {
+    debugPrint(
+      'CallKitIncomingService.showIncomingCall: raw data=$data',
+    );
     final callId = data['callId'] as String? ?? '';
     final callerName = data['callerName'] as String? ?? 'Unknown';
     final channelName = data['channelName'] as String? ?? '';
     final callerId = data['callerId'] as String? ?? '';
-    if (callId.isEmpty) return;
+    if (callId.isEmpty) {
+      debugPrint('CallKitIncomingService.showIncomingCall: missing callId, abort');
+      return;
+    }
 
     final params = CallKitParams(
       id: callId,
@@ -48,7 +54,11 @@ class CallKitIncomingService {
       ios: const IOSParams(iconName: 'CallKitLogo', handleType: 'generic'),
     );
 
+    debugPrint(
+      'CallKitIncomingService.showIncomingCall: showing CallKit id=$callId caller=$callerName channel=$channelName',
+    );
     await FlutterCallkitIncoming.showCallkitIncoming(params);
+    debugPrint('CallKitIncomingService.showIncomingCall: showCallkitIncoming done');
   }
 
   /// Dismiss incoming call UI (e.g. after call ended or declined).
@@ -60,6 +70,7 @@ class CallKitIncomingService {
   static void listenToCallEvents() {
     FlutterCallkitIncoming.onEvent.listen((CallEvent? event) {
       if (event == null) return;
+      debugPrint('CallKitIncomingService.listenToCallEvents: event=${event.event} body=${event.body}');
       switch (event.event) {
         case Event.actionCallAccept:
           _onAccept(event.body);
@@ -77,6 +88,7 @@ class CallKitIncomingService {
   }
 
   static void _onAccept(Map<String, dynamic>? body) {
+    debugPrint('CallKitIncomingService._onAccept: body=$body');
     if (body == null) return;
     final extra = body['extra'];
     if (extra is! Map<String, dynamic>) return;
@@ -84,13 +96,19 @@ class CallKitIncomingService {
     final callerName = extra['callerName'] as String? ?? 'Unknown';
     final channelName = extra['channelName'] as String?;
     final callerId = extra['callerId'] as String?;
-    if (callId.isEmpty) return;
-    if (!IncomingCallDeduplication.shouldShow(callId)) return;
+    if (callId.isEmpty) {
+      debugPrint('CallKitIncomingService._onAccept: missing callId');
+      return;
+    }
+    // Always show in-app screen when user taps Accept (even if callId was already shown via FCM/WS).
     if (IncomingCallDeduplication.isIncomingCallUIVisible) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _navigatorKey?.currentContext;
-      if (ctx == null) return;
+      if (ctx == null) {
+        debugPrint('CallKitIncomingService._onAccept: navigator context is null');
+        return;
+      }
       IncomingCallDeduplication.setIncomingCallUIVisible(true);
       Navigator.of(ctx)
           .push(
@@ -110,6 +128,7 @@ class CallKitIncomingService {
   }
 
   static void _onDecline(Map<String, dynamic>? body) {
+    debugPrint('CallKitIncomingService._onDecline: body=$body');
     if (body == null) return;
     final id = body['id'] as String?;
     if (id != null && id.isNotEmpty) {

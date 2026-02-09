@@ -348,7 +348,10 @@ class AuthRepositoryImpl implements AuthRepository {
     try {
       await remoteDataSource.updateFcmToken(idToken, fcmToken);
     } catch (e) {
-      debugPrint('updateFcmToken failed: $e');
+      debugPrint(
+        'updateFcmToken failed (incoming call push may not work): $e',
+      );
+      rethrow;
     }
   }
 }

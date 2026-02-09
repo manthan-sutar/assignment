@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import '../../../../core/widgets/app_loading.dart';
+import '../../data/services/callkit_incoming_service.dart';
 import '../../data/services/signaling_service.dart';
 import '../../domain/repositories/call_repository.dart';
 import '../bloc/incoming_call/incoming_call_bloc.dart';
@@ -62,7 +63,10 @@ class _IncomingCallPageState extends State<IncomingCallPage> {
         if (payload.callId != widget.callId) return;
         if (mounted) {
           _stopRingtone();
-          context.read<IncomingCallBloc>().add(const IncomingCallCancelled());
+          CallKitIncomingService.endCall(widget.callId);
+          // Close screen when caller cancels. Don't use context.read<IncomingCallBloc>()
+          // — the bloc is provided below this widget so it's not in the ancestor tree.
+          Navigator.of(context).pop();
         }
       });
     } catch (_) {}

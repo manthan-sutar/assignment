@@ -10,3 +10,7 @@ abstract class ReelsEvent extends Equatable {
 class ReelsLoadRequested extends ReelsEvent {
   const ReelsLoadRequested();
 }
+
+class ReelsLoadMoreRequested extends ReelsEvent {
+  const ReelsLoadMoreRequested();
+}
